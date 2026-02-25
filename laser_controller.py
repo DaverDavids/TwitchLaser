@@ -109,16 +109,14 @@ class LaserController:
         partial = self._line_buf
 
         while time.time() - start < timeout:
-            # Return a complete line already in the buffer
             if '\n' in partial:
                 line, partial = partial.split('\n', 1)
                 self._line_buf = partial
                 stripped = line.strip()
                 if stripped:
                     return stripped
-                continue   # skip blank lines, loop for next
+                continue
 
-            # Read more bytes
             try:
                 if self.connection_type == 'network':
                     self.connection.settimeout(0.05)
@@ -140,7 +138,7 @@ class LaserController:
                 return None
 
         self._line_buf = partial
-        return None  # timeout
+        return None
 
     def send_command(self, command):
         """Send a single command and wait for its response."""
@@ -168,20 +166,24 @@ class LaserController:
 
     def send_gcode(self, gcode_lines, progress_callback=None):
         """
-        Stream G-code to FluidNC using a pipeline so the motion planner
-        always has upcoming moves buffered. This eliminates pausing/slowing
-        at corners and curves by keeping PIPELINE_DEPTH commands in-flight.
+        Stream G-code to FluidNC with a small pipeline so the motion planner
+        always has a few moves buffered ahead, enabling smooth cornering.
 
-        FluidNC responds with 'ok' for each received command (not when the
-        motion finishes), so we can stay ahead by up to PIPELINE_DEPTH
-        commands and the planner can smooth across all of them.
+        Pipeline depth is kept low (4) to avoid flooding the ESP32 async_tcp
+        task — which crashes with a watchdog error if too many commands are
+        queued simultaneously over TCP.  INTER_SEND_DELAY adds a short pause
+        between consecutive sends so echo responses don't pile up.
+
+        At 3000 mm/min with ~1-2 mm segments, each move takes 20-40 ms, so
+        4 commands ahead = 80-160 ms of planner lookahead — more than enough
+        to maintain constant speed through curves.
         """
-        PIPELINE_DEPTH = 24   # commands to keep in-flight at once
+        PIPELINE_DEPTH  = 4      # commands in-flight at once; keep low for TCP stability
+        INTER_SEND_DELAY = 0.012  # 12 ms between sends to throttle async_tcp load
 
         if isinstance(gcode_lines, str):
             gcode_lines = gcode_lines.split('\n')
 
-        # Strip comments, skip blank lines
         commands = []
         for line in gcode_lines:
             stripped = line.split(';')[0].strip()
@@ -192,7 +194,7 @@ class LaserController:
         if total == 0:
             return True, "No commands"
 
-        debug_print(f"Streaming {total} G-code commands (pipeline depth {PIPELINE_DEPTH})...")
+        debug_print(f"Streaming {total} G-code commands (pipeline={PIPELINE_DEPTH}, delay={INTER_SEND_DELAY*1000:.0f}ms)...")
 
         with self.lock:
             if not self.connected:
@@ -201,25 +203,32 @@ class LaserController:
 
             self._flush_input()
 
-            sent  = 0    # index of next command to send
-            acked = 0    # index of next command expecting an 'ok'
+            sent      = 0
+            acked     = 0
             in_flight = 0
+            last_send = 0.0
 
             while acked < total:
-                # Fill the pipeline
+                # Send commands up to PIPELINE_DEPTH, throttled by INTER_SEND_DELAY
                 while sent < total and in_flight < PIPELINE_DEPTH:
+                    now = time.monotonic()
+                    wait = INTER_SEND_DELAY - (now - last_send)
+                    if wait > 0:
+                        time.sleep(wait)
+
                     cmd = (commands[sent] + '\n').encode()
                     try:
                         if self.connection_type == 'network':
                             self.connection.sendall(cmd)
                         else:
                             self.connection.write(cmd)
+                        last_send = time.monotonic()
                         in_flight += 1
                         sent += 1
                     except Exception as e:
                         return False, f"Send error at line {sent + 1}: {e}"
 
-                # Wait for one acknowledgement
+                # Wait for one ack before sending more
                 line = self._read_line(timeout=15.0)
                 if line is None:
                     return False, f"Timeout waiting for response at line {acked + 1}"
@@ -236,7 +245,7 @@ class LaserController:
                     acked += 1
                     if progress_callback:
                         progress_callback(acked, total)
-                # Anything else (status reports '<...>', feedback '[...]') is ignored
+                # status reports / echo lines are silently ignored
 
         debug_print(f"Successfully streamed {total} commands")
         return True, f"Completed {total} commands"
