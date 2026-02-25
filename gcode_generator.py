@@ -4,7 +4,7 @@ G-code Generator - Converts text to laser engraving G-code
 Font engines:
   hershey_builtin  - built-in stroke font (always available)
   hershey_lib      - extended Hershey fonts via `hershey-fonts` package
-  ttf              - any TTF/OTF font via `fonttools` package
+  ttf              - any TTF/OTF font via `fontTools` package
 
 Laser mode:
   Uses M4 (dynamic power) so G0 rapids auto-disable the laser and G1 cuts
@@ -83,13 +83,13 @@ except ImportError:
     debug_print('hershey-fonts not installed; hershey_lib fonts will fall back to builtin')
 
 try:
-    from fonttools.ttLib import TTFont as _TTFont
-    from fonttools.pens.recordingPen import RecordingPen as _RecordingPen
+    from fontTools.ttLib import TTFont as _TTFont
+    from fontTools.pens.recordingPen import RecordingPen as _RecordingPen
     _FONTTOOLS_AVAILABLE = True
-    debug_print('fonttools library available')
+    debug_print('fontTools library available')
 except ImportError:
     _FONTTOOLS_AVAILABLE = False
-    debug_print('fonttools not installed; TTF fonts will fall back to builtin')
+    debug_print('fontTools not installed; TTF fonts will fall back to builtin')
 
 
 # ── Main class ────────────────────────────────────────────────
@@ -288,11 +288,11 @@ class GCodeGenerator:
 
     def _ttf_glyphs(self, text):
         """
-        Render text using a TTF/OTF font via fonttools.
+        Render text using a TTF/OTF font via fontTools.
         Bezier curves (cubic & quadratic) are flattened to line segments.
         """
         if not _FONTTOOLS_AVAILABLE:
-            debug_print('fonttools not available, using builtin')
+            debug_print('fontTools not available, using builtin')
             return _builtin_glyphs(text)
         if not self.ttf_path:
             debug_print('No ttf_path configured, using builtin')
@@ -364,7 +364,7 @@ def _builtin_glyphs(text):
 
 def _ttf_recording_to_polylines(commands, scale):
     """
-    Convert fonttools RecordingPen commands to polylines.
+    Convert fontTools RecordingPen commands to polylines.
     All coordinates are multiplied by `scale` (normalises to ~10 units tall).
     Supports moveTo, lineTo, curveTo (cubic Bezier), qCurveTo (quadratic), closePath, endPath.
     """
