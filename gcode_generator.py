@@ -263,10 +263,23 @@ class GCodeGenerator:
         try:
             hf = _HersheyFonts()
             hf.load_default_font(hf_name)
-            polylines = [
-                [(x1, y1), (x2, y2)]
-                for (x1, y1), (x2, y2) in hf.lines_for_text(text)
-            ]
+            # Chain consecutive segments into continuous polylines so the
+            # laser doesn't pulse off/on between every segment in M4 mode.
+            EPS = 1e-6
+            polylines = []
+            current = None
+            for (x1, y1), (x2, y2) in hf.lines_for_text(text):
+                if current is None:
+                    current = [(x1, y1), (x2, y2)]
+                else:
+                    lx, ly = current[-1]
+                    if abs(lx - x1) < EPS and abs(ly - y1) < EPS:
+                        current.append((x2, y2))
+                    else:
+                        polylines.append(current)
+                        current = [(x1, y1), (x2, y2)]
+            if current:
+                polylines.append(current)
             return polylines if polylines else _builtin_glyphs(text)
 
         except Exception as e:
@@ -403,20 +416,15 @@ def _ttf_recording_to_polylines(commands, scale):
 
         elif op == 'qCurveTo':
             # Quadratic (TrueType): may have implicit on-curve points between control pts
-            # Simplest correct approach: convert each quad segment to cubic and flatten
             p0 = cur_pos
-            # pts = [control1, ..., endpoint]
-            # Handle implicit on-curves for TrueType splines
             all_pts = [(p[0] * scale, p[1] * scale) for p in pts]
             endpoint = all_pts[-1]
             ctrl_pts = all_pts[:-1]
 
             segments = []
             if len(ctrl_pts) == 1:
-                # Single quadratic segment
                 segments = [(p0, ctrl_pts[0], endpoint)]
             else:
-                # Multiple control points: generate implicit on-curves
                 prev = p0
                 for i, cp in enumerate(ctrl_pts):
                     if i == len(ctrl_pts) - 1:
@@ -428,7 +436,6 @@ def _ttf_recording_to_polylines(commands, scale):
                     prev = on
 
             for (sp0, qcp, sp3) in segments:
-                # Quadratic → cubic conversion
                 cp1 = (sp0[0] + 2/3*(qcp[0]-sp0[0]), sp0[1] + 2/3*(qcp[1]-sp0[1]))
                 cp2 = (sp3[0] + 2/3*(qcp[0]-sp3[0]), sp3[1] + 2/3*(qcp[1]-sp3[1]))
                 steps = 8

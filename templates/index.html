@@ -132,62 +132,48 @@
                 <input type="number" id="s-passes" min="1" max="5" step="1" value="1">
             </div>
         </div>
-        <label>Text Height (mm)</label>
-        <input type="number" id="s-textheight" min="2" max="50" step="0.5" value="5">
-        <label>Font / Stroke Weight</label>
-        <select id="s-font">
-            <option value="simplex">Simplex - thin single stroke</option>
-            <option value="medium">Medium - lightly bold</option>
-            <option value="bold">Bold - solid strokes</option>
-            <option value="heavy">Heavy - thick filled look</option>
-        </select>
         <div class="btn-row">
             <button onclick="saveLaserSettings()">&#128190; Save Settings</button>
             <span class="save-ok" id="laser-ok">&#10003; Saved</span>
         </div>
     </div>
 
-	<!-- Text / Font Settings -->
-	<div class="card">
-	  <h3>Text Settings</h3>
-	  <div class="form-grid">
-		<div><label>Initial Height mm</label>
-		  <input type="number" id="s-height" min="2" max="50" step="0.5" value="5"></div>
-		<div><label>Min Height mm</label>
-		  <input type="number" id="s-min-height" min="1" max="20" step="0.5" value="2"></div>
-		<div style="grid-column:1/-1"><label>Font</label>
-		  <select id="s-font" style="width:100%;background:#0e0e10;border:1px solid #3a3a43;color:#efeff1;padding:7px 10px;border-radius:6px;font-size:0.85rem;">
-			<option value="simplex">Simplex – thin</option>
-			<option value="medium">Simplex – medium</option>
-			<option value="bold">Simplex – bold</option>
-			<option value="heavy">Simplex – heavy</option>
-			<option value="hershey_roman">Hershey Roman (serif)</option>
-			<option value="hershey_script">Hershey Script (cursive)</option>
-			<option value="hershey_gothic">Hershey Gothic</option>
-			<option value="ttf">TrueType font</option>
-			<option value="ttf_bold">TrueType font – bold</option>
-		  </select></div>
-	  </div>
-	  <div class="btn-row">
-		<button onclick="saveTextSettings()">Save</button>
-		<span class="save-ok" id="text-ok">Saved</span>
-	  </div>
-	</div>
-
-	<!-- System Controls -->
-	<div class="card">
-	  <h3>System Controls</h3>
-	  <p style="font-size:0.78rem;color:#adadb8;margin-bottom:10px">
-		Reset Board archives all placement history and starts fresh.
-		Restart reboots the service on the Pi.
-	  </p>
-	  <div class="btn-row">
-		<button class="danger" onclick="resetBoard()">Reset Board</button>
-		<button class="secondary" onclick="restartService()">Restart Service</button>
-	  </div>
-	  <div id="sys-result" style="margin-top:8px;font-size:0.8rem;color:#adadb8"></div>
-	</div>
-
+    <!-- TEXT / FONT SETTINGS -->
+    <div class="card">
+        <h3>Text &amp; Font Settings</h3>
+        <div class="form-grid">
+            <div>
+                <label>Initial Height (mm)</label>
+                <input type="number" id="s-height" min="2" max="50" step="0.5" value="5">
+            </div>
+            <div>
+                <label>Min Height (mm)</label>
+                <input type="number" id="s-min-height" min="1" max="20" step="0.5" value="2">
+            </div>
+            <div style="grid-column:1/-1">
+                <label>Font</label>
+                <select id="s-font">
+                    <option value="simplex">Simplex &#8211; thin</option>
+                    <option value="medium">Simplex &#8211; medium</option>
+                    <option value="bold">Simplex &#8211; bold</option>
+                    <option value="heavy">Simplex &#8211; heavy</option>
+                    <option value="hershey_roman">Hershey Roman (serif)</option>
+                    <option value="hershey_script">Hershey Script (cursive)</option>
+                    <option value="hershey_gothic">Hershey Gothic</option>
+                    <option value="ttf">TrueType font</option>
+                    <option value="ttf_bold">TrueType font &#8211; bold</option>
+                </select>
+            </div>
+            <div style="grid-column:1/-1">
+                <label>TTF Font Path (required for TrueType options)</label>
+                <input type="text" id="s-ttf-path" placeholder="/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf">
+            </div>
+        </div>
+        <div class="btn-row">
+            <button onclick="saveTextSettings()">&#128190; Save</button>
+            <span class="save-ok" id="text-ok">&#10003; Saved</span>
+        </div>
+    </div>
 
     <!-- WORK AREA -->
     <div class="card">
@@ -301,20 +287,15 @@ async function updateStatus() {
 
         if (!window._settingsLoaded && s.config) {
             var ls = s.config.laser_settings || {};
-            var ts = s.config.text_settings   || {};
-            setVal('s-power',       ls.power_percent     || 50);
-            setVal('s-spindle-max', ls.spindle_max        || 1000);
-            setVal('s-speed',       ls.speed_mm_per_min   || 1000);
-            setVal('s-passes',      ls.passes             || 1);
-            setVal('s-textheight',  ts.initial_height_mm  || 5);
-            if (ts.font) setVal('s-font', ts.font);
-			if (s.config.text_settings) {
-			setVal('s-height',     s.config.text_settings.initial_height_mm ?? 5);
-			setVal('s-min-height', s.config.text_settings.min_height_mm     ?? 2);
-			const fs = document.getElementById('s-font');
-			if (fs && s.config.text_settings.font) fs.value = s.config.text_settings.font;
-			}
-
+            var ts = s.config.text_settings  || {};
+            setVal('s-power',      ls.power_percent    || 50);
+            setVal('s-spindle-max',ls.spindle_max       || 1000);
+            setVal('s-speed',      ls.speed_mm_per_min  || 1000);
+            setVal('s-passes',     ls.passes            || 1);
+            setVal('s-height',     ts.initial_height_mm || 5);
+            setVal('s-min-height', ts.min_height_mm     || 2);
+            if (ts.font)     setVal('s-font',     ts.font);
+            if (ts.ttf_path) setVal('s-ttf-path', ts.ttf_path);
             window._settingsLoaded = true;
         }
     } catch(e) {}
@@ -372,48 +353,32 @@ async function testEngrave() {
 
 // LASER SETTINGS
 async function saveLaserSettings() {
-    var fontKey = document.getElementById('s-font').value;
     var body = {
         laser_settings: {
-            power_percent:     +document.getElementById('s-power').value,
-            spindle_max:       +document.getElementById('s-spindle-max').value,
-            speed_mm_per_min:  +document.getElementById('s-speed').value,
-            passes:            +document.getElementById('s-passes').value
-        },
-        text_settings: {
-            font:              fontKey,
-            initial_height_mm: +document.getElementById('s-textheight').value
+            power_percent:    +document.getElementById('s-power').value,
+            spindle_max:      +document.getElementById('s-spindle-max').value,
+            speed_mm_per_min: +document.getElementById('s-speed').value,
+            passes:           +document.getElementById('s-passes').value
         }
     };
     await api('/api/config', 'POST', body);
     flashOk('laser-ok');
-    log('Settings saved — font: ' + fontKey, '#00c853');
+    log('Laser settings saved', '#00c853');
 }
 
+// TEXT / FONT SETTINGS
 async function saveTextSettings() {
-    const body = { text_settings: {
+    var font    = document.getElementById('s-font').value;
+    var ttfPath = document.getElementById('s-ttf-path').value.trim();
+    var body = { text_settings: {
         initial_height_mm: parseFloat(document.getElementById('s-height').value),
         min_height_mm:     parseFloat(document.getElementById('s-min-height').value),
-        font:              document.getElementById('s-font').value
+        font:     font,
+        ttf_path: ttfPath || null
     }};
-    const r = await api('/api/config', 'POST', body);
+    await api('/api/config', 'POST', body);
     flashOk('text-ok');
-    log(`Text settings saved — font: ${body.text_settings.font}  height: ${body.text_settings.initial_height_mm}mm`, '#00c853');
-}
-
-async function resetBoard() {
-    if (!confirm('Archive current board and start fresh? This cannot be undone.')) return;
-    const r = await api('/api/reset_board', 'POST');
-    document.getElementById('sys-result').textContent = r.message;
-    log(r.message, r.success ? '#ffa000' : '#e91916');
-    if (r.success) drawVisualizer();
-}
-
-async function restartService() {
-    if (!confirm('Restart the TwitchLaser service on the Pi?')) return;
-    const r = await api('/api/restart_service', 'POST');
-    document.getElementById('sys-result').textContent = r.message;
-    log(r.message, '#adadb8');
+    log('Text settings saved — font: ' + font, '#00c853');
 }
 
 // WORK AREA
