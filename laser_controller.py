@@ -166,21 +166,23 @@ class LaserController:
 
     def send_gcode(self, gcode_lines, progress_callback=None):
         """
-        Stream G-code to FluidNC with a small pipeline so the motion planner
-        always has a few moves buffered ahead, enabling smooth cornering.
+        Send G-code to FluidNC one command at a time, relying on FluidNC's
+        natural flow control for smooth motion.
 
-        Pipeline depth is kept low (4) to avoid flooding the ESP32 async_tcp
-        task — which crashes with a watchdog error if too many commands are
-        queued simultaneously over TCP.  INTER_SEND_DELAY adds a short pause
-        between consecutive sends so echo responses don't pile up.
+        How it works:
+          FluidNC delays 'ok' when the motion planner buffer is full — it
+          only responds once it has accepted the command into the planner.
+          So sending one-at-a-time with no sleep naturally keeps the planner
+          populated without ever flooding the async_tcp task on the ESP32.
 
-        At 3000 mm/min with ~1-2 mm segments, each move takes 20-40 ms, so
-        4 commands ahead = 80-160 ms of planner lookahead — more than enough
-        to maintain constant speed through curves.
+          Timeline example (15-slot planner, 3000 mm/min, ~2mm segments):
+            - Commands 1-15 get instant 'ok' as the planner fills up.
+            - Command 16 blocks until move 1 finishes (~40ms), then 'ok' comes.
+            - From here on the planner stays full: smooth constant-speed motion.
+
+          This is simpler and more stable than any explicit pipeline scheme
+          because FluidNC itself provides the backpressure.
         """
-        PIPELINE_DEPTH  = 4      # commands in-flight at once; keep low for TCP stability
-        INTER_SEND_DELAY = 0.012  # 12 ms between sends to throttle async_tcp load
-
         if isinstance(gcode_lines, str):
             gcode_lines = gcode_lines.split('\n')
 
@@ -194,7 +196,7 @@ class LaserController:
         if total == 0:
             return True, "No commands"
 
-        debug_print(f"Streaming {total} G-code commands (pipeline={PIPELINE_DEPTH}, delay={INTER_SEND_DELAY*1000:.0f}ms)...")
+        debug_print(f"Sending {total} G-code commands (natural flow control)...")
 
         with self.lock:
             if not self.connected:
@@ -203,51 +205,35 @@ class LaserController:
 
             self._flush_input()
 
-            sent      = 0
-            acked     = 0
-            in_flight = 0
-            last_send = 0.0
+            for i, cmd in enumerate(commands):
+                # Send the command
+                try:
+                    if self.connection_type == 'network':
+                        self.connection.sendall((cmd + '\n').encode())
+                    else:
+                        self.connection.write((cmd + '\n').encode())
+                except Exception as e:
+                    return False, f"Send error at line {i + 1}: {e}"
 
-            while acked < total:
-                # Send commands up to PIPELINE_DEPTH, throttled by INTER_SEND_DELAY
-                while sent < total and in_flight < PIPELINE_DEPTH:
-                    now = time.monotonic()
-                    wait = INTER_SEND_DELAY - (now - last_send)
-                    if wait > 0:
-                        time.sleep(wait)
+                # Wait for 'ok'. FluidNC delays this when the planner is
+                # full, so the planner always stays populated. Skip echo
+                # lines and status reports while waiting.
+                while True:
+                    response = self._read_line(timeout=15.0)
+                    if response is None:
+                        return False, f"Timeout waiting for response at line {i + 1}"
+                    lc = response.lower()
+                    if lc == 'ok':
+                        break
+                    elif lc.startswith('error'):
+                        debug_print(f"FluidNC error at line {i + 1}: {response}")
+                        break
+                    # echo / status report / MSG - keep waiting for 'ok'
 
-                    cmd = (commands[sent] + '\n').encode()
-                    try:
-                        if self.connection_type == 'network':
-                            self.connection.sendall(cmd)
-                        else:
-                            self.connection.write(cmd)
-                        last_send = time.monotonic()
-                        in_flight += 1
-                        sent += 1
-                    except Exception as e:
-                        return False, f"Send error at line {sent + 1}: {e}"
+                if progress_callback:
+                    progress_callback(i + 1, total)
 
-                # Wait for one ack before sending more
-                line = self._read_line(timeout=15.0)
-                if line is None:
-                    return False, f"Timeout waiting for response at line {acked + 1}"
-
-                lc = line.lower()
-                if lc == 'ok':
-                    in_flight -= 1
-                    acked += 1
-                    if progress_callback:
-                        progress_callback(acked, total)
-                elif lc.startswith('error'):
-                    debug_print(f"FluidNC error at line {acked + 1}: {line}")
-                    in_flight -= 1
-                    acked += 1
-                    if progress_callback:
-                        progress_callback(acked, total)
-                # status reports / echo lines are silently ignored
-
-        debug_print(f"Successfully streamed {total} commands")
+        debug_print(f"Successfully sent {total} commands")
         return True, f"Completed {total} commands"
 
     def home(self):
