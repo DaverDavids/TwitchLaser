@@ -1,0 +1,227 @@
+
+╔══════════════════════════════════════════════════════════════╗
+║           DEPLOYMENT CHECKLIST                               ║
+╚══════════════════════════════════════════════════════════════╝
+
+BEFORE TRANSFER TO RASPBERRY PI:
+═══════════════════════════════════════════════════════════════
+
+Hardware Preparation:
+□ Raspberry Pi Zero 2 W has Raspberry Pi OS installed
+□ Pi has internet connection (WiFi configured)
+□ BACHIN T-A4 laser engraver powered on
+□ Laser engraver connected to network
+□ USB webcam connected to Pi (optional)
+□ SD card has sufficient space (2GB+ free)
+
+Network Setup:
+□ Know Pi IP address or hostname
+□ Can SSH to Pi (ssh pi@raspberrypi.local)
+□ FluidNC hostname or IP known
+□ Can ping FluidNC from Pi
+□ Both devices on same network
+
+Twitch Setup:
+□ Registered Twitch developer app
+□ Have Client ID
+□ Have Client Secret
+□ Know channel username
+□ OAuth scopes: channel:read:subscriptions
+
+Safety:
+□ Laser safety glasses available
+□ Fire extinguisher nearby
+□ Proper ventilation
+□ Scrap material for testing
+
+
+FILE TRANSFER:
+═══════════════════════════════════════════════════════════════
+
+Option 1 - SCP:
+□ scp -r twitchlaser/ pi@raspberrypi.local:~/
+
+Option 2 - SFTP:
+□ Use FileZilla, WinSCP, or similar
+□ Transfer twitchlaser/ folder to /home/pi/
+
+Option 3 - USB:
+□ Copy to USB stick
+□ Mount on Pi and copy
+
+Option 4 - Git:
+□ Create repository
+□ Clone on Pi
+
+
+INSTALLATION ON RASPBERRY PI:
+═══════════════════════════════════════════════════════════════
+
+Step 1 - SSH to Pi:
+□ ssh pi@raspberrypi.local
+□ cd ~/twitchlaser
+
+Step 2 - Configure Secrets:
+□ cp secrets.py.example secrets.py
+□ nano secrets.py
+□ Fill in WiFi credentials
+□ Fill in Twitch API credentials
+□ Fill in FluidNC connection details
+□ Save and exit
+
+Step 3 - Run Installer:
+□ chmod +x install.sh
+□ ./install.sh
+□ Wait for completion (~5-10 minutes)
+
+Step 4 - Verify Installation:
+□ Check service status: sudo systemctl status twitchlaser
+□ Should show "active (running)"
+
+
+TESTING:
+═══════════════════════════════════════════════════════════════
+
+Network Tests:
+□ ./dev.sh test-fluidnc
+□ Should connect to FluidNC
+□ ./dev.sh test-camera  
+□ Should detect camera (if connected)
+□ ./dev.sh test-twitch
+□ Should authenticate with Twitch
+
+Web Interface:
+□ Open http://twitchlaser.local:5000
+□ All status LEDs should be green (or camera off if no USB cam)
+□ Check "Laser Controls" section
+
+Laser Control:
+□ Click "Home" button
+□ Laser should home both axes
+□ Click "Unlock" if needed
+□ Try command: G0 X10 Y10
+□ Laser should move
+
+Test Engraving:
+□ Place scrap material on bed
+□ Ensure laser is focused
+□ Set power to 20% (LOW for testing!)
+□ Enter text: "TEST"
+□ Click "Engrave Test"
+□ Watch first engraving
+□ Adjust power/speed as needed
+
+Camera (if installed):
+□ Check "Live View" shows feed
+□ Visit http://twitchlaser.local:5000/video_feed
+□ Should show MJPEG stream
+
+Twitch Integration:
+□ Click "Start Monitoring"
+□ Status should show "Running"
+□ Check logs: sudo journalctl -u twitchlaser -f
+□ Should see Twitch authentication messages
+
+
+TROUBLESHOOTING:
+═══════════════════════════════════════════════════════════════
+
+If web interface won't load:
+□ Check service: sudo systemctl status twitchlaser
+□ View logs: ./dev.sh logs
+□ Verify port 5000 not in use: sudo netstat -tlnp | grep 5000
+□ Try Pi IP address instead of hostname
+
+If FluidNC won't connect:
+□ Ping test: ping bachin-3c-ta4.local
+□ Telnet test: telnet bachin-3c-ta4.local 23
+□ Check FluidNC powered on
+□ Verify hostname in secrets.py
+□ Try IP address instead of hostname
+
+If Twitch won't authenticate:
+□ Verify credentials in secrets.py
+□ Check internet connection
+□ Test API: ./dev.sh test-twitch
+□ Regenerate OAuth token if needed
+
+If laser won't move:
+□ Home laser first
+□ Unlock if showing alarm
+□ Check FluidNC connection
+□ Try manual commands
+□ Verify homing switches working
+
+
+PRODUCTION USE:
+═══════════════════════════════════════════════════════════════
+
+Safety First:
+□ Start with LOW power (20-30%)
+□ Test on scrap material
+□ Never leave unattended
+□ Keep area clear
+□ Have emergency stop ready
+
+Daily Startup:
+□ Power on laser engraver
+□ Wait for Pi to boot (~30 seconds)
+□ Open web interface
+□ Home laser
+□ Start Twitch monitoring
+□ Begin streaming (if desired)
+
+Monitoring:
+□ Watch queue size
+□ Check placement coverage
+□ Monitor camera feed
+□ Check laser status
+□ Watch for errors
+
+Daily Shutdown:
+□ Stop Twitch monitoring
+□ Wait for queue to empty
+□ Home laser
+□ Power off laser
+□ Shutdown Pi: sudo shutdown -h now
+
+
+BACKUP:
+═══════════════════════════════════════════════════════════════
+
+Regular Backups:
+□ Run: ./dev.sh backup
+□ Copy backups/ folder off Pi
+□ Keep secrets.py backed up
+□ Export placements periodically
+
+After Major Changes:
+□ Backup before clearing placements
+□ Backup before updating code
+□ Keep multiple versions
+
+
+SUPPORT RESOURCES:
+═══════════════════════════════════════════════════════════════
+
+Logs:
+□ Real-time: ./dev.sh logs
+□ Recent: sudo journalctl -u twitchlaser -n 100
+
+Status:
+□ Quick check: ./dev.sh status
+□ Web interface: /api/status endpoint
+
+Testing:
+□ Component tests: ./dev.sh test-*
+□ Manual mode: ./dev.sh start
+
+Documentation:
+□ README.md - Full documentation
+□ QUICKSTART.md - Setup guide
+□ PROJECT_SUMMARY.txt - Overview
+
+
+╔══════════════════════════════════════════════════════════════╗
+║  Complete this checklist before going live with Twitch!      ║
+╚══════════════════════════════════════════════════════════════╝

@@ -1,0 +1,183 @@
+
+╔══════════════════════════════════════════════════════════════╗
+║           TWITCHLASER PROJECT - SUMMARY                      ║
+╚══════════════════════════════════════════════════════════════╝
+
+PROJECT STRUCTURE CREATED:
+═══════════════════════════════════════════════════════════════
+
+twitchlaser/
+├── Core Application Files
+│   ├── main.py                    # Main entry point, starts all services
+│   ├── config.py                  # Configuration with JSON persistence
+│   ├── secrets.py.example         # Template for credentials
+│   │
+├── Hardware Control
+│   ├── laser_controller.py        # FluidNC telnet/serial communication
+│   ├── gcode_generator.py         # Text → G-code converter (Hershey font)
+│   ├── layout_manager.py          # Smart placement tracking
+│   │
+├── Integrations
+│   ├── twitch_monitor.py          # Twitch API subscription monitoring
+│   ├── camera_stream.py           # USB webcam MJPEG streaming
+│   │
+├── Web Interface
+│   ├── web_server.py              # Flask REST API
+│   ├── templates/index.html       # Web UI
+│   ├── static/css/style.css       # Dark theme CSS
+│   └── static/js/app.js           # Client-side logic
+│   │
+├── Installation
+│   ├── install.sh                 # Automated installer
+│   ├── requirements.txt           # Python dependencies
+│   ├── README.md                  # Full documentation
+│   └── QUICKSTART.md              # Quick setup guide
+│   │
+└── Runtime Data
+    └── data/
+        ├── config.json            # Settings (auto-created)
+        └── placements.json        # Engraving history (auto-created)
+
+
+KEY FEATURES:
+═══════════════════════════════════════════════════════════════
+
+✅ Twitch Integration
+   - Monitors channel for new subscriptions
+   - Automatic queuing and engraving
+   - OAuth 2.0 authentication
+
+✅ Smart Placement System
+   - Tracks all engraved names with coordinates
+   - Finds optimal empty spaces
+   - Automatically shrinks text when space fills up
+   - JSON persistence across reboots
+
+✅ Laser Control
+   - FluidNC network (telnet) or serial connection
+   - Full G-code generation from text
+   - Hershey simplex stroke font
+   - Configurable power, speed, passes
+   - Emergency stop support
+
+✅ Web Interface
+   - Real-time status monitoring
+   - Live camera feed
+   - Test engraving with custom text
+   - Full laser control (home, unlock, commands)
+   - Settings management
+   - Placement visualization
+   - Queue monitoring
+
+✅ Auto-Start on Boot
+   - Systemd service integration
+   - Auto-reconnect on failure
+   - Comprehensive logging
+
+✅ Camera Streaming
+   - USB webcam support
+   - MJPEG streaming for OBS
+   - Configurable resolution/FPS
+
+
+CONFIGURATION:
+═══════════════════════════════════════════════════════════════
+
+FluidNC Settings (from your config):
+   - Board: BACHIN-3C-TA4
+   - X-axis: 0-200mm, 100 steps/mm
+   - Y-axis: 0-298mm, 100 steps/mm
+   - Laser: PWM on GPIO 2, 20kHz
+   - Speed map: 0-1000 = 0-100%
+
+Default Application Settings:
+   - Hostname: twitchlaser.local
+   - Web port: 5000
+   - Laser power: 50% (adjustable)
+   - Speed: 1000 mm/min
+   - Text height: 5mm initial, 2mm minimum
+   - Connection: Network telnet (port 23)
+
+
+INSTALLATION STEPS:
+═══════════════════════════════════════════════════════════════
+
+1. Copy entire twitchlaser/ folder to Raspberry Pi Zero 2 W
+
+2. Run installer:
+   cd twitchlaser
+   ./install.sh
+
+3. Configure secrets:
+   nano secrets.py
+   (Add WiFi, Twitch API, FluidNC connection details)
+
+4. Start service:
+   sudo systemctl start twitchlaser
+
+5. Access web interface:
+   http://twitchlaser.local:5000
+
+
+ADAPTED FROM ESP32 REQUIREMENTS:
+═══════════════════════════════════════════════════════════════
+
+✅ HOSTNAME variable → Used throughout (twitchlaser)
+✅ Secrets file → secrets.py with WIFI_SSID/WIFI_PSK
+✅ Settings persistence → JSON storage in data/
+✅ Reconnection logic → Auto-reconnect for WiFi/FluidNC/Twitch
+✅ Debug control → DEBUG flag in config.py
+✅ Separate HTML → templates/index.html + static files
+✅ mDNS support → Avahi service (twitchlaser.local)
+
+
+PYTHON DEPENDENCIES:
+═══════════════════════════════════════════════════════════════
+
+- Flask 3.0.0          # Web server
+- requests 2.31.0      # HTTP for Twitch API  
+- opencv-python 4.8.1  # Camera streaming
+- pyserial 3.5         # Serial communication (if not using network)
+
+
+NEXT STEPS:
+═══════════════════════════════════════════════════════════════
+
+1. Get Twitch Developer credentials:
+   https://dev.twitch.tv/console/apps
+
+2. Verify FluidNC is accessible on network:
+   ping bachin-3c-ta4.local
+
+3. Follow QUICKSTART.md for detailed setup
+
+4. Test with manual engraving before enabling Twitch
+
+5. Connect USB camera for streaming
+
+6. Stream to Twitch/OBS using /video_feed endpoint
+
+
+SAFETY REMINDERS:
+═══════════════════════════════════════════════════════════════
+
+⚠️  Start with LOW laser power (50%) and test on scrap
+⚠️  Never leave laser unattended
+⚠️  Emergency stop button in web interface
+⚠️  Ensure proper ventilation
+⚠️  Use laser safety glasses
+
+
+FILES READY TO TRANSFER:
+═══════════════════════════════════════════════════════════════
+
+All files are in: ./twitchlaser/
+
+Transfer entire folder to Raspberry Pi:
+   scp -r twitchlaser/ pi@raspberrypi.local:~/
+
+Or use SFTP, rsync, USB stick, etc.
+
+╔══════════════════════════════════════════════════════════════╗
+║  Project complete! Review files and transfer to Raspberry Pi ║
+╚══════════════════════════════════════════════════════════════╝
