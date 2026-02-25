@@ -174,8 +174,6 @@ class GCodeGenerator:
         units_height = (max_y - min_y) or 1.0
 
         # ── Step 2: flip Y so text is right-side-up ──────────
-        # Machines with Y+ downward engrave text upside-down if we don't flip.
-        # We negate Y and then re-normalize so the text sits above y_start.
         flipped = [[(x, -y) for (x, y) in poly] for poly in polylines]
         b2 = _bounds(flipped)
         min_x, min_y, max_x, max_y = b2
@@ -222,14 +220,14 @@ class GCodeGenerator:
 
     def _bold_passes(self, x1, y1, x2, y2):
         """Yield (ox1,oy1,ox2,oy2) perpendicular offsets for bold strokes."""
-        step = 0.15  # mm per pass (≈ laser spot)
+        step = 0.15
         n = max(1, round(self.line_width_mm / step))
         dx, dy = x2 - x1, y2 - y1
         length = math.hypot(dx, dy)
         if length < 1e-6:
             yield (x1, y1, x2, y2)
             return
-        px, py = -dy / length, dx / length   # perpendicular unit vector
+        px, py = -dy / length, dx / length
         for k in range(n):
             off = (k - (n - 1) / 2.0) * step
             yield (x1 + px*off, y1 + py*off,
@@ -305,7 +303,7 @@ class GCodeGenerator:
                 self._cmap = self._ttfont.getBestCmap() or {}
                 self._units_per_em = self._ttfont['head'].unitsPerEm
 
-            scale = 10.0 / self._units_per_em   # normalise to ~10 font-units tall
+            scale = 10.0 / self._units_per_em
 
             polylines = []
             cursor_x = 0.0
@@ -365,9 +363,11 @@ def _builtin_glyphs(text):
 def _ttf_recording_to_polylines(commands, scale):
     """
     Convert fontTools RecordingPen commands to polylines.
-    All coordinates are multiplied by `scale` (normalises to ~10 units tall).
-    Supports moveTo, lineTo, curveTo (cubic Bezier), qCurveTo (quadratic), closePath, endPath.
+    Bezier curves are flattened with CURVE_STEPS segments each.
+    More steps = smaller direction changes = smoother motion at speed.
     """
+    CURVE_STEPS = 16   # was 8; doubled for smoother curves at engraving speed
+
     polylines = []
     current = None
     cur_pos = (0.0, 0.0)
@@ -397,14 +397,12 @@ def _ttf_recording_to_polylines(commands, scale):
             add_pt(x, y)
 
         elif op == 'curveTo':
-            # Cubic Bezier: control points pts[0], pts[1], endpoint pts[2]
             p0 = cur_pos
             p1 = (pts[0][0] * scale, pts[0][1] * scale)
             p2 = (pts[1][0] * scale, pts[1][1] * scale)
             p3 = (pts[2][0] * scale, pts[2][1] * scale)
-            steps = 8
-            for i in range(1, steps + 1):
-                t = i / steps
+            for i in range(1, CURVE_STEPS + 1):
+                t = i / CURVE_STEPS
                 mt = 1.0 - t
                 x = mt**3*p0[0] + 3*mt**2*t*p1[0] + 3*mt*t**2*p2[0] + t**3*p3[0]
                 y = mt**3*p0[1] + 3*mt**2*t*p1[1] + 3*mt*t**2*p2[1] + t**3*p3[1]
@@ -415,7 +413,6 @@ def _ttf_recording_to_polylines(commands, scale):
                 cur_pos = pt
 
         elif op == 'qCurveTo':
-            # Quadratic (TrueType): may have implicit on-curve points between control pts
             p0 = cur_pos
             all_pts = [(p[0] * scale, p[1] * scale) for p in pts]
             endpoint = all_pts[-1]
@@ -438,9 +435,8 @@ def _ttf_recording_to_polylines(commands, scale):
             for (sp0, qcp, sp3) in segments:
                 cp1 = (sp0[0] + 2/3*(qcp[0]-sp0[0]), sp0[1] + 2/3*(qcp[1]-sp0[1]))
                 cp2 = (sp3[0] + 2/3*(qcp[0]-sp3[0]), sp3[1] + 2/3*(qcp[1]-sp3[1]))
-                steps = 8
-                for i in range(1, steps + 1):
-                    t = i / steps
+                for i in range(1, CURVE_STEPS + 1):
+                    t = i / CURVE_STEPS
                     mt = 1.0 - t
                     x = mt**3*sp0[0] + 3*mt**2*t*cp1[0] + 3*mt*t**2*cp2[0] + t**3*sp3[0]
                     y = mt**3*sp0[1] + 3*mt**2*t*cp1[1] + 3*mt*t**2*cp2[1] + t**3*sp3[1]

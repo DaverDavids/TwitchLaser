@@ -13,6 +13,7 @@ class LaserController:
         self.connection = None
         self.connection_type = config.get('fluidnc_connection', 'network')
         self.lock = threading.Lock()
+        self._line_buf = ''   # persistent read buffer for _read_line
         self.connect()
 
     def connect(self):
@@ -24,9 +25,8 @@ class LaserController:
                 self._connect_serial()
 
             if self.connected:
-                # Wait for FluidNC to initialize
                 time.sleep(1)
-                self.send_command("$$")  # Request settings
+                self.send_command("$$")
                 debug_print("FluidNC connected and initialized")
         except Exception as e:
             debug_print(f"Connection error: {e}")
@@ -55,7 +55,7 @@ class LaserController:
             baud = config.get('serial_baud', 115200)
 
             self.connection = serial.Serial(port, baud, timeout=1)
-            time.sleep(2)  # Wait for reset
+            time.sleep(2)
             self.connected = True
             debug_print(f"Connected to FluidNC on {port}")
         except Exception as e:
@@ -74,17 +74,76 @@ class LaserController:
         """Disconnect from FluidNC"""
         if self.connection:
             try:
-                if self.connection_type == 'network':
-                    self.connection.close()
-                else:
-                    self.connection.close()
+                self.connection.close()
             except:
                 pass
         self.connected = False
+        self._line_buf = ''
         debug_print("Disconnected from FluidNC")
 
+    def _flush_input(self):
+        """Discard any data already in the receive buffer."""
+        self._line_buf = ''
+        try:
+            if self.connection_type == 'network':
+                self.connection.settimeout(0.1)
+                while True:
+                    try:
+                        data = self.connection.recv(1024)
+                        if not data:
+                            break
+                    except socket.timeout:
+                        break
+            else:
+                self.connection.reset_input_buffer()
+        except Exception:
+            pass
+
+    def _read_line(self, timeout=10.0):
+        """
+        Read one complete line from FluidNC.
+        Returns the stripped string, or None on timeout.
+        Uses self._line_buf to handle partial reads across calls.
+        """
+        start = time.time()
+        partial = self._line_buf
+
+        while time.time() - start < timeout:
+            # Return a complete line already in the buffer
+            if '\n' in partial:
+                line, partial = partial.split('\n', 1)
+                self._line_buf = partial
+                stripped = line.strip()
+                if stripped:
+                    return stripped
+                continue   # skip blank lines, loop for next
+
+            # Read more bytes
+            try:
+                if self.connection_type == 'network':
+                    self.connection.settimeout(0.05)
+                    try:
+                        data = self.connection.recv(256)
+                        if data:
+                            partial += data.decode('utf-8', errors='ignore')
+                    except socket.timeout:
+                        pass
+                else:
+                    if self.connection.in_waiting > 0:
+                        data = self.connection.read(self.connection.in_waiting)
+                        partial += data.decode('utf-8', errors='ignore')
+                    else:
+                        time.sleep(0.005)
+            except Exception as e:
+                debug_print(f"_read_line error: {e}")
+                self._line_buf = partial
+                return None
+
+        self._line_buf = partial
+        return None  # timeout
+
     def send_command(self, command):
-        """Send a single command to FluidNC"""
+        """Send a single command and wait for its response."""
         with self.lock:
             if not self.connected:
                 debug_print("Not connected, attempting reconnect...")
@@ -93,92 +152,93 @@ class LaserController:
 
             try:
                 cmd = command.strip() + '\n'
-
                 if self.connection_type == 'network':
                     self.connection.sendall(cmd.encode())
                 else:
                     self.connection.write(cmd.encode())
 
-                # Read response
-                time.sleep(0.1)
-                response = self._read_response()
-
-                debug_print(f"CMD: {command.strip()} -> {response[:50]}")
+                response = self._read_line(timeout=2.0) or ''
+                debug_print(f"CMD: {command.strip()} -> {response[:80]}")
                 return True, response
 
             except Exception as e:
-                debug_print(f"Send command error: {e}")
+                debug_print(f"send_command error: {e}")
                 self.connected = False
                 return False, str(e)
 
-    def _read_response(self, timeout=2):
-        """Read response from FluidNC"""
-        response = ""
-        start_time = time.time()
-
-        try:
-            while (time.time() - start_time) < timeout:
-                if self.connection_type == 'network':
-                    self.connection.settimeout(0.1)
-                    try:
-                        data = self.connection.recv(1024)
-                        if data:
-                            response += data.decode('utf-8', errors='ignore')
-                    except socket.timeout:
-                        if response:
-                            break
-                else:
-                    if self.connection.in_waiting:
-                        data = self.connection.read(self.connection.in_waiting)
-                        response += data.decode('utf-8', errors='ignore')
-                    else:
-                        time.sleep(0.1)
-                        if response:
-                            break
-        except Exception as e:
-            debug_print(f"Read response error: {e}")
-
-        return response
-
     def send_gcode(self, gcode_lines, progress_callback=None):
         """
-        Send multiple G-code lines to FluidNC
+        Stream G-code to FluidNC using a pipeline so the motion planner
+        always has upcoming moves buffered. This eliminates pausing/slowing
+        at corners and curves by keeping PIPELINE_DEPTH commands in-flight.
 
-        Args:
-            gcode_lines: List of G-code commands or single string
-            progress_callback: Function to call with progress (line_num, total_lines)
-
-        Returns:
-            (success, message)
+        FluidNC responds with 'ok' for each received command (not when the
+        motion finishes), so we can stay ahead by up to PIPELINE_DEPTH
+        commands and the planner can smooth across all of them.
         """
+        PIPELINE_DEPTH = 24   # commands to keep in-flight at once
+
         if isinstance(gcode_lines, str):
             gcode_lines = gcode_lines.split('\n')
 
-        # Filter out comments and empty lines
-        commands = [line.split(';')[0].strip() 
-                   for line in gcode_lines 
-                   if line.strip() and not line.strip().startswith(';')]
+        # Strip comments, skip blank lines
+        commands = []
+        for line in gcode_lines:
+            stripped = line.split(';')[0].strip()
+            if stripped:
+                commands.append(stripped)
 
         total = len(commands)
-        debug_print(f"Sending {total} G-code commands...")
+        if total == 0:
+            return True, "No commands"
 
-        for i, cmd in enumerate(commands):
-            success, response = self.send_command(cmd)
+        debug_print(f"Streaming {total} G-code commands (pipeline depth {PIPELINE_DEPTH})...")
 
-            if not success:
-                return False, f"Failed at line {i+1}: {response}"
+        with self.lock:
+            if not self.connected:
+                if not self.reconnect():
+                    return False, "Not connected to FluidNC"
 
-            # Check for error responses
-            if 'error' in response.lower():
-                return False, f"Error at line {i+1}: {response}"
+            self._flush_input()
 
-            if progress_callback:
-                progress_callback(i + 1, total)
+            sent  = 0    # index of next command to send
+            acked = 0    # index of next command expecting an 'ok'
+            in_flight = 0
 
-            # Small delay between commands
-            time.sleep(0.01)
+            while acked < total:
+                # Fill the pipeline
+                while sent < total and in_flight < PIPELINE_DEPTH:
+                    cmd = (commands[sent] + '\n').encode()
+                    try:
+                        if self.connection_type == 'network':
+                            self.connection.sendall(cmd)
+                        else:
+                            self.connection.write(cmd)
+                        in_flight += 1
+                        sent += 1
+                    except Exception as e:
+                        return False, f"Send error at line {sent + 1}: {e}"
 
-        debug_print(f"Successfully sent {total} commands")
+                # Wait for one acknowledgement
+                line = self._read_line(timeout=15.0)
+                if line is None:
+                    return False, f"Timeout waiting for response at line {acked + 1}"
+
+                lc = line.lower()
+                if lc == 'ok':
+                    in_flight -= 1
+                    acked += 1
+                    if progress_callback:
+                        progress_callback(acked, total)
+                elif lc.startswith('error'):
+                    debug_print(f"FluidNC error at line {acked + 1}: {line}")
+                    in_flight -= 1
+                    acked += 1
+                    if progress_callback:
+                        progress_callback(acked, total)
+                # Anything else (status reports '<...>', feedback '[...]') is ignored
+
+        debug_print(f"Successfully streamed {total} commands")
         return True, f"Completed {total} commands"
 
     def home(self):
@@ -206,12 +266,15 @@ class LaserController:
     def stop(self):
         """Emergency stop"""
         debug_print("EMERGENCY STOP")
-        if self.connection_type == 'network':
-            self.connection.sendall(b'!\n')  # Feed hold
-            time.sleep(0.1)
-            self.connection.sendall(b'\x18\n')  # Reset
-        else:
-            self.connection.write(b'!\n')
-            time.sleep(0.1)
-            self.connection.write(b'\x18\n')
+        try:
+            if self.connection_type == 'network':
+                self.connection.sendall(b'!\n')
+                time.sleep(0.1)
+                self.connection.sendall(b'\x18\n')
+            else:
+                self.connection.write(b'!\n')
+                time.sleep(0.1)
+                self.connection.write(b'\x18\n')
+        except Exception:
+            pass
         return True, "Stopped"
