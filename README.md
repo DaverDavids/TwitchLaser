@@ -1,3 +1,5 @@
+* Disclaimer: the code in this repo was created/assisted by AI.
+
 # TwitchLaser - Twitch-Controlled Laser Engraver
 
 Automatically engrave Twitch subscriber names on your laser engraver!
@@ -23,14 +25,15 @@ Automatically engrave Twitch subscriber names on your laser engraver!
 
 ## Installation
 
-### 1. Clone or Copy Files
+### Dependencies
 
-```bash
-cd ~
-# Copy twitchlaser directory to Raspberry Pi
-```
+- Python 3.7+
+- Flask
+- OpenCV
+- Twitch API credentials
+- FluidNC firmware on laser controller
 
-### 2. Run Installation Script
+### Run Installation Script
 
 ```bash
 cd twitchlaser
@@ -46,44 +49,17 @@ This will:
 - Create systemd service for auto-start
 - Enable service on boot
 
-### 3. Configure Secrets
+### Configure Secrets
 
-Edit the secrets file with your credentials:
-
-```bash
-nano secrets.py
-```
-
-Fill in:
+Edit the secrets file with your credentials. Fill in:
 - **WiFi credentials** (WIFI_SSID, WIFI_PSK)
 - **Twitch API credentials** (get from https://dev.twitch.tv/console/apps)
 - **FluidNC connection details** (hostname or IP)
 
-### 4. Test FluidNC Connection
-
-Make sure your BACHIN-3C-TA4 is powered on and connected to the network.
-
-Test connection:
-```bash
-ping bachin-3c-ta4.local
-```
-
-Or use IP address if mDNS doesn't work.
-
-### 5. Start Service
+### Start Service
 
 ```bash
 sudo systemctl start twitchlaser
-```
-
-Check status:
-```bash
-sudo systemctl status twitchlaser
-```
-
-View logs:
-```bash
-sudo journalctl -u twitchlaser -f
 ```
 
 ## Web Interface
@@ -91,16 +67,6 @@ sudo journalctl -u twitchlaser -f
 Access the control panel at:
 - `http://twitchlaser.local:5000`
 - `http://<raspberry-pi-ip>:5000`
-
-### Features:
-
-- **Live View** - Camera feed of engraving area
-- **Test Engraving** - Manually engrave test text
-- **Queue Status** - View pending engravings
-- **Settings** - Configure laser power, speed, text size
-- **Laser Controls** - Home, unlock, send G-code commands
-- **Twitch Controls** - Start/stop subscription monitoring
-- **Placement Map** - Visual representation of engraved names
 
 ## Configuration
 
@@ -142,45 +108,6 @@ The built-in camera feed can be used with OBS:
 2. URL: `http://twitchlaser.local:5000/video_feed`
 3. Crop and position as desired
 
-## Troubleshooting
-
-### FluidNC Not Connected
-
-Check:
-- FluidNC powered on
-- Network cable connected
-- Correct hostname/IP in secrets.py
-- Telnet port 23 accessible: `telnet bachin-3c-ta4.local 23`
-
-### Twitch Not Working
-
-Check:
-- Valid API credentials in secrets.py
-- Correct channel name
-- Internet connection working
-- Check logs: `sudo journalctl -u twitchlaser -f`
-
-### Camera Not Working
-
-Check:
-- USB camera connected
-- Camera permissions: `ls -l /dev/video0`
-- Try different camera index in web interface
-
-### Service Won't Start
-
-Check logs:
-```bash
-sudo journalctl -u twitchlaser -n 50
-```
-
-Test manually:
-```bash
-cd ~/twitchlaser
-source venv/bin/activate
-python3 main.py
-```
-
 ## File Structure
 
 ```
@@ -221,22 +148,3 @@ twitchlaser/
 - `POST /api/twitch_toggle` - Start/stop Twitch monitoring
 - `GET /api/queue` - Get engraving queue
 - `GET /video_feed` - MJPEG camera stream
-
-## Safety
-
-⚠️ **IMPORTANT SAFETY NOTES**:
-
-- Never leave laser unattended while operating
-- Ensure proper ventilation
-- Use appropriate laser safety glasses
-- Keep fire extinguisher nearby
-- Test laser power on scrap material first
-- Emergency stop button available in web interface
-
-## License
-
-MIT License - Use at your own risk
-
-## Credits
-
-Built for BACHIN-3C-TA4 running FluidNC firmware
