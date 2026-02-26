@@ -32,7 +32,7 @@ def index():
     return render_template('index.html')
 
 
-# ── Status ────────────────────────────────────────────────────
+# ── Status ─────────────────────────────────────────────────
 @app.route('/api/status')
 def get_status():
     stats = layout.get_statistics() if layout else {}
@@ -47,40 +47,36 @@ def get_status():
     })
 
 
-# ── Config ────────────────────────────────────────────────────
+# ── Config ─────────────────────────────────────────────────
 @app.route('/api/config', methods=['GET', 'POST'])
 def handle_config():
     if request.method == 'POST':
         updates = request.json or {}
         config.update(updates)
 
-        # Live-apply laser settings to running generator
         if gcode_gen and 'laser_settings' in updates:
             s = updates['laser_settings']
-            if 'power_percent'    in s: gcode_gen.laser_power  = s['power_percent']
-            if 'speed_mm_per_min' in s: gcode_gen.speed        = s['speed_mm_per_min']
-            if 'spindle_max'      in s: gcode_gen.spindle_max  = s['spindle_max']
+            if 'power_percent'    in s: gcode_gen.laser_power = s['power_percent']
+            if 'speed_mm_per_min' in s: gcode_gen.speed       = s['speed_mm_per_min']
+            if 'spindle_max'      in s: gcode_gen.spindle_max = s['spindle_max']
 
-        # Live-apply font / text settings to running generator
         if gcode_gen and 'text_settings' in updates:
             ts       = updates['text_settings']
             font_key = ts.get('font', gcode_gen.font_key)
             profile  = FONT_PROFILES.get(font_key, FONT_PROFILES['simplex'])
-            # profile is (label, line_width_mm, engine)
             gcode_gen.font_key      = font_key
             gcode_gen.line_width_mm = profile[1]
             gcode_gen.engine        = profile[2]
-            gcode_gen._glyph_cache  = {}   # invalidate cache on font change
-            # Always sync ttf_path from config (covers both explicit updates and inherited value)
+            gcode_gen._glyph_cache  = {}
             gcode_gen.ttf_path = config.get('text_settings.ttf_path', gcode_gen.ttf_path)
-            gcode_gen._ttfont  = None  # force TTF reload
+            gcode_gen._ttfont  = None
 
         return jsonify({'success': True})
 
     return jsonify(config.config)
 
 
-# ── Font list ─────────────────────────────────────────────────
+# ── Font list ───────────────────────────────────────────────
 @app.route('/api/fonts')
 def get_fonts():
     return jsonify([
@@ -89,7 +85,7 @@ def get_fonts():
     ])
 
 
-# ── Work Area ─────────────────────────────────────────────────
+# ── Work Area ───────────────────────────────────────────────
 @app.route('/api/work_area', methods=['GET', 'POST'])
 def work_area():
     if request.method == 'POST':
@@ -100,7 +96,6 @@ def work_area():
         for f in required:
             if f not in data:
                 return jsonify({'success': False, 'message': f'Missing: {f}'}), 400
-
         config.set('engraving_area', data)
         if layout:
             layout.machine_width_mm  = data['machine_width_mm']
@@ -124,7 +119,7 @@ def work_area():
     return jsonify({'machine': {}, 'active': {}, 'placements': []}), 503
 
 
-# ── Laser commands ────────────────────────────────────────────
+# ── Laser commands ───────────────────────────────────────────
 @app.route('/api/laser_command', methods=['POST'])
 def laser_command():
     cmd = (request.json or {}).get('command', '')
@@ -133,23 +128,31 @@ def laser_command():
     success, response = laser.send_command(cmd)
     return jsonify({'success': success, 'response': response})
 
-@app.route('/api/laser_home',   methods=['POST'])
+@app.route('/api/laser_home',      methods=['POST'])
 def laser_home():
-    s, r = laser.home();   return jsonify({'success': s, 'message': r})
+    s, r = laser.home();      return jsonify({'success': s, 'message': r})
 
-@app.route('/api/laser_unlock', methods=['POST'])
+@app.route('/api/laser_unlock',    methods=['POST'])
 def laser_unlock():
-    s, r = laser.unlock(); return jsonify({'success': s, 'message': r})
+    s, r = laser.unlock();    return jsonify({'success': s, 'message': r})
 
-@app.route('/api/laser_stop',   methods=['POST'])
+@app.route('/api/laser_stop',      methods=['POST'])
 def laser_stop():
-    s, r = laser.stop();   return jsonify({'success': s, 'message': r})
+    s, r = laser.stop();      return jsonify({'success': s, 'message': r})
+
+@app.route('/api/laser_reconnect', methods=['POST'])
+def laser_reconnect():
+    ok = laser.reconnect()
+    return jsonify({'success': ok,
+                    'connected': laser.connected,
+                    'message': 'Reconnected' if ok else 'Reconnect failed'})
 
 
 # ── Engraving ─────────────────────────────────────────────────
 @app.route('/api/test_engrave', methods=['POST'])
 def test_engrave():
-    text = (request.json or {}).get('text', '').strip()
+    data = request.json or {}
+    text = data.get('text', '').strip()
     if not text:
         return jsonify({'success': False, 'message': 'No text provided'})
 
@@ -157,37 +160,107 @@ def test_engrave():
         text_height    = config.get('text_settings.initial_height_mm', 5.0)
         laser_settings = config.get('laser_settings', {})
 
-        # Get true bounding-box size using active font engine
-        width, height = gcode_gen.estimate_dimensions(text, text_height)
+        # Optional explicit rectangle: {x1, y1, x2, y2} in machine coordinates
+        rect = data.get('rect')  # e.g. {"x1":10,"y1":20,"x2":50,"y2":30}
 
-        # Find a free spot (auto-shrinks if needed)
-        position = layout.find_empty_space(width, height, text_height)
-        if not position:
-            return jsonify({'success': False, 'message': 'No space available on board'})
+        if rect:
+            x1 = float(rect['x1']); y1 = float(rect['y1'])
+            x2 = float(rect['x2']); y2 = float(rect['y2'])
+            x_machine = min(x1, x2)
+            y_machine = min(y1, y2)
+            box_w     = abs(x2 - x1)
+            box_h     = abs(y2 - y1)
 
-        x_local, y_local, final_h = position
-        x_machine = x_local + layout.offset_x_mm
-        y_machine  = y_local + layout.offset_y_mm
+            # Fit text height into the box, respecting min height
+            min_h = config.get('text_settings.min_height_mm', 2.0)
+            final_h = min(text_height, box_h * 0.85)   # 85% of box height
+            final_h = max(final_h, min_h)
 
-        gcode, aw, ah = gcode_gen.text_to_gcode(
-            text, x_machine, y_machine, final_h,
-            passes=laser_settings.get('passes', 1),
-        )
+            gcode, aw, ah = gcode_gen.text_to_gcode(
+                text, x_machine, y_machine, final_h,
+                passes=laser_settings.get('passes', 1),
+            )
+            success, message = laser.send_gcode(gcode.split('\n'))
 
-        success, message = laser.send_gcode(gcode.split('\n'))
+            if success:
+                x_local = x_machine - layout.offset_x_mm
+                y_local = y_machine - layout.offset_y_mm
+                layout.add_placement(text, x_local, y_local, aw, ah, final_h)
+                return jsonify({
+                    'success': True,
+                    'message': f'Engraved "{text}" at ({x_machine:.1f},{y_machine:.1f})  {aw:.1f}x{ah:.1f} mm',
+                    'position': {'x': x_machine, 'y': y_machine},
+                    'size':     {'width': aw, 'height': ah},
+                })
+            return jsonify({'success': False, 'message': message})
 
-        if success:
-            layout.add_placement(text, x_local, y_local, aw, ah, final_h)
-            return jsonify({
-                'success': True,
-                'message': f'Engraved "{text}"  machine=({x_machine:.1f},{y_machine:.1f})  {aw:.1f}x{ah:.1f} mm',
-                'position': {'x': x_machine, 'y': y_machine},
-                'size':     {'width': aw, 'height': ah},
-            })
-        return jsonify({'success': False, 'message': message})
+        else:
+            # Auto-place as normal
+            width, height = gcode_gen.estimate_dimensions(text, text_height)
+            position = layout.find_empty_space(width, height, text_height)
+            if not position:
+                return jsonify({'success': False, 'message': 'No space available on board'})
+
+            x_local, y_local, final_h = position
+            x_machine = x_local + layout.offset_x_mm
+            y_machine = y_local + layout.offset_y_mm
+
+            gcode, aw, ah = gcode_gen.text_to_gcode(
+                text, x_machine, y_machine, final_h,
+                passes=laser_settings.get('passes', 1),
+            )
+            success, message = laser.send_gcode(gcode.split('\n'))
+
+            if success:
+                layout.add_placement(text, x_local, y_local, aw, ah, final_h)
+                return jsonify({
+                    'success': True,
+                    'message': f'Engraved "{text}" machine=({x_machine:.1f},{y_machine:.1f})  {aw:.1f}x{ah:.1f} mm',
+                    'position': {'x': x_machine, 'y': y_machine},
+                    'size':     {'width': aw, 'height': ah},
+                })
+            return jsonify({'success': False, 'message': message})
 
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)})
+
+
+# ── Manual placement (block out a region without engraving) ──
+@app.route('/api/add_placement', methods=['POST'])
+def add_placement():
+    """
+    Add a placement record to the database without engraving anything.
+    Useful for blocking out areas that were already engraved but not tracked.
+
+    Body: { name, x1, y1, x2, y2 }  (machine coordinates)
+    """
+    data = request.json or {}
+    name = data.get('name', '').strip()
+    if not name:
+        return jsonify({'success': False, 'message': 'Name is required'})
+
+    try:
+        x1 = float(data['x1']); y1 = float(data['y1'])
+        x2 = float(data['x2']); y2 = float(data['y2'])
+    except (KeyError, ValueError) as e:
+        return jsonify({'success': False, 'message': f'Invalid coordinates: {e}'})
+
+    x_machine = min(x1, x2)
+    y_machine = min(y1, y2)
+    width     = abs(x2 - x1)
+    height    = abs(y2 - y1)
+
+    if width < 0.1 or height < 0.1:
+        return jsonify({'success': False, 'message': 'Rectangle too small (min 0.1mm)'})
+
+    x_local = x_machine - layout.offset_x_mm
+    y_local = y_machine - layout.offset_y_mm
+    layout.add_placement(name, x_local, y_local, width, height, height * 0.8)
+
+    return jsonify({
+        'success': True,
+        'message': f'Added "{name}" at ({x_machine:.1f},{y_machine:.1f})  {width:.1f}x{height:.1f} mm',
+    })
 
 
 # ── Placements ────────────────────────────────────────────────
@@ -238,12 +311,19 @@ def toggle_twitch():
     success = twitch.start()
     return jsonify({'success': success, 'running': success})
 
+@app.route('/api/twitch_reconnect', methods=['POST'])
+def twitch_reconnect():
+    ok = twitch.reconnect()
+    return jsonify({'success': ok,
+                    'running': twitch.is_running(),
+                    'message': 'Reconnecting…' if ok else 'Reconnect failed'})
+
 @app.route('/api/queue')
 def get_queue():
     return jsonify({'queue': list(engraving_queue)})
 
 
-# ── Camera stream ─────────────────────────────────────────────
+# ── Camera stream ──────────────────────────────────────────────
 @app.route('/video_feed')
 def video_feed():
     def generate():

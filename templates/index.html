@@ -61,6 +61,10 @@
         .danger-zone .btn-row { margin-top: 0; }
 
         #visualizer-wrap { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; position: relative; }
+
+        .coord-row { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 8px; margin-top: 8px; }
+        .coord-row label { margin-top: 0; }
+        .hint { font-size: 0.75rem; color: #6b6b78; margin-top: 4px; }
     </style>
 </head>
 <body>
@@ -91,7 +95,11 @@
             <button onclick="laserCmd('home')">&#127968; Home</button>
             <button class="secondary" onclick="laserCmd('unlock')">&#128275; Unlock</button>
             <button class="danger" onclick="laserCmd('stop')">&#9940; E-Stop</button>
-            <button class="secondary" onclick="toggleTwitch()" id="btn-twitch">&#9654; Twitch</button>
+        </div>
+        <div class="btn-row">
+            <button class="secondary" onclick="toggleTwitch()" id="btn-twitch">&#9654; Start Twitch</button>
+            <button class="secondary" onclick="reconnectLaser()" id="btn-laser-reconnect">&#128279; Reconnect Laser</button>
+            <button class="secondary" onclick="reconnectTwitch()" id="btn-twitch-reconnect">&#128279; Reconnect Twitch</button>
         </div>
         <label style="margin-top:14px;">Manual G-code</label>
         <div style="display:flex; gap:6px;">
@@ -105,10 +113,37 @@
         <h3>Test Engrave</h3>
         <label>Text to engrave</label>
         <input type="text" id="test-text" placeholder="e.g. TestUser" maxlength="24">
+        <label style="margin-top:10px;">Override position <span style="color:#6b6b78; font-weight:normal;">(optional &mdash; leave blank for auto-place)</span></label>
+        <div class="coord-row">
+            <div><label>X1 (mm)</label><input type="number" id="te-x1" placeholder="auto" step="0.1"></div>
+            <div><label>Y1 (mm)</label><input type="number" id="te-y1" placeholder="auto" step="0.1"></div>
+            <div><label>X2 (mm)</label><input type="number" id="te-x2" placeholder="auto" step="0.1"></div>
+            <div><label>Y2 (mm)</label><input type="number" id="te-y2" placeholder="auto" step="0.1"></div>
+        </div>
+        <p class="hint">Machine coordinates of the rectangle to engrave into. All four required to use override.</p>
         <div class="btn-row" style="margin-top:10px;">
             <button class="success" onclick="testEngrave()">&#9654; Engrave Now</button>
         </div>
         <div id="engrave-result" style="margin-top:8px; font-size:0.8rem; color:#adadb8;"></div>
+    </div>
+
+    <!-- MANUAL PLACEMENT -->
+    <div class="card">
+        <h3>Add Manual Placement</h3>
+        <p style="font-size:0.78rem; color:#adadb8; margin-bottom:8px;">Block out a region in the database without engraving &mdash; use this when a name is already on the board but not tracked.</p>
+        <label>Name / label</label>
+        <input type="text" id="mp-name" placeholder="e.g. ExistingName" maxlength="40">
+        <label style="margin-top:10px;">Rectangle (machine coordinates)</label>
+        <div class="coord-row">
+            <div><label>X1 (mm)</label><input type="number" id="mp-x1" placeholder="0" step="0.1"></div>
+            <div><label>Y1 (mm)</label><input type="number" id="mp-y1" placeholder="0" step="0.1"></div>
+            <div><label>X2 (mm)</label><input type="number" id="mp-x2" placeholder="20" step="0.1"></div>
+            <div><label>Y2 (mm)</label><input type="number" id="mp-y2" placeholder="8" step="0.1"></div>
+        </div>
+        <div class="btn-row">
+            <button onclick="addManualPlacement()">&#43; Add to Database</button>
+        </div>
+        <div id="mp-result" style="margin-top:8px; font-size:0.8rem; color:#adadb8;"></div>
     </div>
 
     <!-- LASER SETTINGS -->
@@ -283,7 +318,7 @@ async function updateStatus() {
         document.getElementById('stat-queue').textContent    = s.queue_size;
         document.getElementById('stat-names').textContent    = s.placements;
         document.getElementById('stat-coverage').textContent = s.coverage + '%';
-        document.getElementById('btn-twitch').textContent    = s.twitch_running ? 'Stop Twitch' : 'Start Twitch';
+        document.getElementById('btn-twitch').textContent    = s.twitch_running ? '&#9646;&#9646; Stop Twitch' : '&#9654; Start Twitch';
 
         if (!window._settingsLoaded && s.config) {
             var ls = s.config.laser_settings || {};
@@ -304,7 +339,7 @@ async function updateStatus() {
 function setDot(id, on) { document.getElementById(id).className = 'dot' + (on ? ' on' : ''); }
 function setVal(id, v)  { var el = document.getElementById(id); if (el) el.value = v; }
 
-// FONT DROPDOWN - load from API and fall back to hardcoded
+// FONT DROPDOWN
 async function loadFonts() {
     try {
         var fonts = await api('/api/fonts');
@@ -339,16 +374,71 @@ async function toggleTwitch() {
     log('Twitch ' + (r.running ? 'started' : 'stopped'), r.running ? '#00c853' : '#adadb8');
 }
 
+async function reconnectLaser() {
+    log('Reconnecting laser...', '#ffa000');
+    var r = await api('/api/laser_reconnect', 'POST');
+    log('Laser: ' + r.message, r.success ? '#00c853' : '#e91916');
+}
+
+async function reconnectTwitch() {
+    log('Reconnecting Twitch...', '#ffa000');
+    var r = await api('/api/twitch_reconnect', 'POST');
+    log('Twitch: ' + r.message, r.success ? '#00c853' : '#e91916');
+}
+
 // TEST ENGRAVE
 async function testEngrave() {
     var text = document.getElementById('test-text').value.trim();
     if (!text) return;
-    var r  = await api('/api/test_engrave', 'POST', {text: text});
+
+    var x1 = document.getElementById('te-x1').value;
+    var y1 = document.getElementById('te-y1').value;
+    var x2 = document.getElementById('te-x2').value;
+    var y2 = document.getElementById('te-y2').value;
+
+    var body = { text: text };
+    // Only send rect if ALL four coords are filled in
+    if (x1 !== '' && y1 !== '' && x2 !== '' && y2 !== '') {
+        body.rect = { x1: parseFloat(x1), y1: parseFloat(y1),
+                      x2: parseFloat(x2), y2: parseFloat(y2) };
+    }
+
+    var r  = await api('/api/test_engrave', 'POST', body);
     var el = document.getElementById('engrave-result');
     el.textContent = r.message;
     el.style.color = r.success ? '#00c853' : '#e91916';
     log('Engrave "' + text + '": ' + r.message, r.success ? '#00c853' : '#e91916');
     if (r.success) drawVisualizer();
+}
+
+// MANUAL PLACEMENT
+async function addManualPlacement() {
+    var name = document.getElementById('mp-name').value.trim();
+    var x1   = document.getElementById('mp-x1').value;
+    var y1   = document.getElementById('mp-y1').value;
+    var x2   = document.getElementById('mp-x2').value;
+    var y2   = document.getElementById('mp-y2').value;
+
+    if (!name) { alert('Please enter a name.'); return; }
+    if (x1===''||y1===''||x2===''||y2==='') { alert('Please fill in all four coordinates.'); return; }
+
+    var r  = await api('/api/add_placement', 'POST', {
+        name: name,
+        x1: parseFloat(x1), y1: parseFloat(y1),
+        x2: parseFloat(x2), y2: parseFloat(y2)
+    });
+    var el = document.getElementById('mp-result');
+    el.textContent = r.message;
+    el.style.color = r.success ? '#00c853' : '#e91916';
+    log('Manual placement "' + name + '": ' + r.message, r.success ? '#00c853' : '#e91916');
+    if (r.success) {
+        document.getElementById('mp-name').value = '';
+        document.getElementById('mp-x1').value   = '';
+        document.getElementById('mp-y1').value   = '';
+        document.getElementById('mp-x2').value   = '';
+        document.getElementById('mp-y2').value   = '';
+        drawVisualizer();
+    }
 }
 
 // LASER SETTINGS
