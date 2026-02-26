@@ -16,6 +16,7 @@ class LaserController:
         self._line_buf = ''
         self._monitor_thread = None
         self._monitor_running = False
+        self._engraving = False  # NEW: flag to pause monitor during jobs
         self.connect()
         self._start_monitor()
 
@@ -91,6 +92,10 @@ class LaserController:
     def _monitor_loop(self):
         while self._monitor_running:
             time.sleep(5)
+            # FIXED: Don't ping or read during active engraving
+            if self._engraving:
+                continue
+            
             if self.connected:
                 # Lightweight ping — send '?' and expect '<'
                 try:
@@ -213,32 +218,45 @@ class LaserController:
                     return False, "Not connected to FluidNC"
 
             self._flush_input()
+            self._engraving = True  # FIXED: Signal monitor to pause
 
-            for i, cmd in enumerate(commands):
-                try:
-                    if self.connection_type == 'network':
-                        self.connection.sendall((cmd + '\n').encode())
-                    else:
-                        self.connection.write((cmd + '\n').encode())
-                except Exception as e:
-                    return False, f"Send error at line {i + 1}: {e}"
+            try:
+                for i, cmd in enumerate(commands):
+                    try:
+                        if self.connection_type == 'network':
+                            self.connection.sendall((cmd + '\n').encode())
+                        else:
+                            self.connection.write((cmd + '\n').encode())
+                    except Exception as e:
+                        return False, f"Send error at line {i + 1}: {e}"
 
-                while True:
-                    response = self._read_line(timeout=15.0)
-                    if response is None:
-                        return False, f"Timeout at line {i + 1}"
-                    lc = response.lower()
-                    if lc == 'ok':
-                        break
-                    elif lc.startswith('error'):
-                        debug_print(f"FluidNC error at line {i + 1}: {response}")
-                        break
+                    # FIXED: Robust ok parsing - ignore echo/status lines
+                    while True:
+                        response = self._read_line(timeout=15.0)
+                        if response is None:
+                            return False, f"Timeout at line {i + 1}"
+                        lc = response.lower()
+                        
+                        # Skip non-response lines
+                        if (lc.startswith('[echo:') or 
+                            lc.startswith('<') or 
+                            lc.startswith('[gc:') or 
+                            lc.startswith('[msg:')):
+                            continue
+                            
+                        if lc == 'ok':
+                            break
+                        elif lc.startswith('error'):
+                            debug_print(f"FluidNC error at line {i + 1}: {response}")
+                            break
 
-                if progress_callback:
-                    progress_callback(i + 1, total)
+                    if progress_callback:
+                        progress_callback(i + 1, total)
 
-        debug_print(f"Successfully sent {total} commands")
-        return True, f"Completed {total} commands"
+                debug_print(f"Successfully sent {total} commands")
+                return True, f"Completed {total} commands"
+            finally:
+                self._engraving = False  # FIXED: Re-enable monitor
 
     # ── Convenience commands ──────────────────────────────────
     def home(self):

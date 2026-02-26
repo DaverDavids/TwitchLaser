@@ -4,6 +4,7 @@ Web Server - Flask-based web interface for TwitchLaser
 
 import os
 import subprocess
+import threading
 
 from flask import Flask, render_template, request, jsonify, Response
 
@@ -13,6 +14,11 @@ from gcode_generator import FONT_PROFILES
 app = Flask(__name__)
 
 laser = layout = gcode_gen = twitch = camera = engraving_queue = obs_ctrl = None
+
+# NEW: Thread-safe engraving progress tracking
+_engrave_lock = threading.Lock()
+_engrave_progress = {'active': False, 'current': 0, 'total': 0, 'text': ''}
+_engrave_stop_flag = False
 
 
 def init_web_server(laser_ctrl, layout_mgr, gcode_generator,
@@ -153,9 +159,29 @@ def laser_reconnect():
                     'message': 'Reconnected' if ok else 'Reconnect failed'})
 
 
+# ── NEW: Engraving progress & stop endpoints ─────────────────
+@app.route('/api/engrave_progress')
+def engrave_progress():
+    """Return current engraving progress."""
+    with _engrave_lock:
+        return jsonify(_engrave_progress.copy())
+
+@app.route('/api/engrave_stop', methods=['POST'])
+def engrave_stop():
+    """Request immediate stop of active engraving."""
+    global _engrave_stop_flag
+    with _engrave_lock:
+        if not _engrave_progress['active']:
+            return jsonify({'success': False, 'message': 'No active engraving'})
+        _engrave_stop_flag = True
+    laser.stop()  # Send E-stop immediately
+    return jsonify({'success': True, 'message': 'Stop requested'})
+
+
 # ── Engraving ─────────────────────────────────────────────────
 @app.route('/api/test_engrave', methods=['POST'])
 def test_engrave():
+    global _engrave_stop_flag
     data = request.json or {}
     text = data.get('text', '').strip()
     if not text:
@@ -165,6 +191,20 @@ def test_engrave():
         text_height    = config.get('text_settings.initial_height_mm', 5.0)
         laser_settings = config.get('laser_settings', {})
         rect = data.get('rect')
+
+        # Reset stop flag and initialize progress
+        with _engrave_lock:
+            _engrave_stop_flag = False
+            _engrave_progress['active'] = True
+            _engrave_progress['current'] = 0
+            _engrave_progress['total'] = 0
+            _engrave_progress['text'] = text
+
+        def progress_cb(current, total):
+            """Progress callback for send_gcode."""
+            with _engrave_lock:
+                _engrave_progress['current'] = current
+                _engrave_progress['total'] = total
 
         if rect:
             x1 = float(rect['x1']); y1 = float(rect['y1'])
@@ -177,8 +217,12 @@ def test_engrave():
                 text, x_machine, y_machine, final_h,
                 passes=laser_settings.get('passes', 1))
             if obs_ctrl: obs_ctrl.on_engrave_start(name=text)
-            success, message = laser.send_gcode(gcode.split('\n'))
+            success, message = laser.send_gcode(gcode.split('\n'), progress_callback=progress_cb)
             if obs_ctrl: obs_ctrl.on_engrave_finish(name=text, success=success)
+            
+            with _engrave_lock:
+                _engrave_progress['active'] = False
+            
             if success:
                 layout.add_placement(text,
                     x_machine - layout.offset_x_mm,
@@ -192,6 +236,8 @@ def test_engrave():
             width, height = gcode_gen.estimate_dimensions(text, text_height)
             position = layout.find_empty_space(width, height, text_height)
             if not position:
+                with _engrave_lock:
+                    _engrave_progress['active'] = False
                 return jsonify({'success': False, 'message': 'No space available on board'})
             x_local, y_local, final_h = position
             x_machine = x_local + layout.offset_x_mm
@@ -200,8 +246,12 @@ def test_engrave():
                 text, x_machine, y_machine, final_h,
                 passes=laser_settings.get('passes', 1))
             if obs_ctrl: obs_ctrl.on_engrave_start(name=text)
-            success, message = laser.send_gcode(gcode.split('\n'))
+            success, message = laser.send_gcode(gcode.split('\n'), progress_callback=progress_cb)
             if obs_ctrl: obs_ctrl.on_engrave_finish(name=text, success=success)
+            
+            with _engrave_lock:
+                _engrave_progress['active'] = False
+            
             if success:
                 layout.add_placement(text, x_local, y_local, aw, ah, final_h)
                 return jsonify({'success': True,
@@ -211,6 +261,8 @@ def test_engrave():
             return jsonify({'success': False, 'message': message})
 
     except Exception as e:
+        with _engrave_lock:
+            _engrave_progress['active'] = False
         return jsonify({'success': False, 'message': str(e)})
 
 

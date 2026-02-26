@@ -140,11 +140,12 @@ def _quad_midpoint(p0, cp, p3):
     return x, y
 
 
-def _arc_cmd(start, end, center, ccw):
+def _arc_cmd(start, end, center, ccw, feed):
+    """FIXED: Add feed rate to arc commands"""
     i = center[0] - start[0]
     j = center[1] - start[1]
     cmd = 'G3' if ccw else 'G2'
-    return f'{cmd} X{end[0]:.4f} Y{end[1]:.4f} I{i:.4f} J{j:.4f}'
+    return f'{cmd} X{end[0]:.4f} Y{end[1]:.4f} I{i:.4f} J{j:.4f} F{feed}'
 
 
 def _bezier_to_arc_or_lines(p0, p1, p2, p3, scale, feed):
@@ -191,7 +192,7 @@ def _bezier_to_arc_or_lines(p0, p1, p2, p3, scale, feed):
 
     cross = _cross2d(sp[0], sp[1], mid[0], mid[1], ep[0], ep[1])
     ccw = cross > 0
-    return [_arc_cmd(sp, ep, center, ccw)]
+    return [_arc_cmd(sp, ep, center, ccw, feed)]
 
 
 def _quad_to_arc_or_lines(p0, cp, p3, scale, feed):
@@ -236,7 +237,7 @@ def _quad_to_arc_or_lines(p0, cp, p3, scale, feed):
 
     cross = _cross2d(sp[0], sp[1], mid[0], mid[1], ep[0], ep[1])
     ccw = cross > 0
-    return [_arc_cmd(sp, ep, center, ccw)]
+    return [_arc_cmd(sp, ep, center, ccw, feed)]
 
 
 # ── Main class ────────────────────────────────────────────────
@@ -599,7 +600,7 @@ def _cubic_to_arc_or_lines_machine(p0, p1, p2, p3, feed):
 
     cross = _cross2d(p0[0], p0[1], mid[0], mid[1], p3[0], p3[1])
     ccw = cross > 0
-    return [_arc_cmd(p0, p3, center, ccw)]
+    return [_arc_cmd(p0, p3, center, ccw, feed)]
 
 
 def _quad_to_arc_or_lines_machine(p0, cp, p3, feed):
@@ -629,7 +630,7 @@ def _quad_to_arc_or_lines_machine(p0, cp, p3, feed):
 
     cross = _cross2d(p0[0], p0[1], mid[0], mid[1], p3[0], p3[1])
     ccw = cross > 0
-    return [_arc_cmd(p0, p3, center, ccw)]
+    return [_arc_cmd(p0, p3, center, ccw, feed)]
 
 
 # ── Module-level helpers ──────────────────────────────────────
