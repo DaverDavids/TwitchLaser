@@ -228,6 +228,11 @@
                 <label>Passes</label>
                 <input type="number" id="s-passes" min="1" max="5" step="1" value="1">
             </div>
+            <div style="grid-column:1/-1">
+                <label>Z Depth (mm) <span style="color:#6b6b78; font-weight:normal;">&#8212; 0 = disabled (no Z motion)</span></label>
+                <input type="number" id="s-z-depth" min="-50" max="50" step="0.1" value="0" placeholder="0">
+                <p class="hint">Positive = move toward material. Machine rapids to this Z before engraving, returns to Z0 when done.</p>
+            </div>
         </div>
         <div class="btn-row">
             <button onclick="saveLaserSettings()">&#128190; Save Settings</button>
@@ -362,6 +367,7 @@ async function updateStatus() {
             setVal('s-spindle-max',ls.spindle_max       || 1000);
             setVal('s-speed',      ls.speed_mm_per_min  || 1000);
             setVal('s-passes',     ls.passes            || 1);
+            setVal('s-z-depth',    ls.z_depth_mm        !== undefined ? ls.z_depth_mm : 0);
             setVal('s-height',     ts2.initial_height_mm || 5);
             setVal('s-min-height', ts2.min_height_mm     || 2);
             if (ts2.font)     setVal('s-font',     ts2.font);
@@ -503,7 +509,8 @@ async function saveLaserSettings() {
         power_percent:    +document.getElementById('s-power').value,
         spindle_max:      +document.getElementById('s-spindle-max').value,
         speed_mm_per_min: +document.getElementById('s-speed').value,
-        passes:           +document.getElementById('s-passes').value
+        passes:           +document.getElementById('s-passes').value,
+        z_depth_mm:       +document.getElementById('s-z-depth').value
     }};
     await api('/api/config','POST',body);
     flashOk('laser-ok'); log('Laser settings saved','#00c853');

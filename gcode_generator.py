@@ -14,6 +14,11 @@ Arc output (TTF engine):
   Bezier curve segments are converted to G2/G3 circular arcs so the
   motion planner executes each curve as a single continuous move.
   Straight segments and degenerate curves fall back to G1.
+
+Z axis:
+  If laser_settings.z_depth_mm is non-zero, the generated G-code will
+  plunge to that Z depth before engraving begins and return to Z0 at the
+  end.  Set to 0.0 (default) to disable Z motion entirely.
 """
 
 import math
@@ -100,16 +105,12 @@ except ImportError:
 # ── Arc fitting helpers ───────────────────────────────────────
 
 def _circumcenter(p0, p1, p2):
-    """
-    Return the circumcenter (cx, cy) of the triangle formed by three points,
-    or None if the points are collinear (no unique circle exists).
-    """
     ax, ay = p0
     bx, by = p1
     cx, cy = p2
     d = 2.0 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by))
     if abs(d) < 1e-10:
-        return None   # collinear
+        return None
     ux = ((ax*ax + ay*ay) * (by - cy) +
           (bx*bx + by*by) * (cy - ay) +
           (cx*cx + cy*cy) * (ay - by)) / d
@@ -120,12 +121,10 @@ def _circumcenter(p0, p1, p2):
 
 
 def _cross2d(ox, oy, ax, ay, bx, by):
-    """2-D cross product of vectors (o→a) and (o→b)."""
     return (ax - ox) * (by - oy) - (ay - oy) * (bx - ox)
 
 
 def _bezier_midpoint(p0, p1, p2, p3):
-    """Midpoint of a cubic Bezier at t=0.5."""
     t = 0.5
     mt = 1.0 - t
     x = mt**3*p0[0] + 3*mt**2*t*p1[0] + 3*mt*t**2*p2[0] + t**3*p3[0]
@@ -134,7 +133,6 @@ def _bezier_midpoint(p0, p1, p2, p3):
 
 
 def _quad_midpoint(p0, cp, p3):
-    """Midpoint of a quadratic Bezier at t=0.5."""
     t = 0.5
     mt = 1.0 - t
     x = mt**2*p0[0] + 2*mt*t*cp[0] + t**2*p3[0]
@@ -143,12 +141,6 @@ def _quad_midpoint(p0, cp, p3):
 
 
 def _arc_cmd(start, end, center, ccw):
-    """
-    Build a G2/G3 arc command string.
-      start, end, center: (x, y) tuples in machine coordinates
-      ccw: True → G3 (counter-clockwise), False → G2 (clockwise)
-    Returns a string like 'G3 X12.345 Y6.789 I-1.234 J0.567'
-    """
     i = center[0] - start[0]
     j = center[1] - start[1]
     cmd = 'G3' if ccw else 'G2'
@@ -156,16 +148,8 @@ def _arc_cmd(start, end, center, ccw):
 
 
 def _bezier_to_arc_or_lines(p0, p1, p2, p3, scale, feed):
-    """
-    Try to represent a scaled cubic Bezier as a single G2/G3 arc.
-    Falls back to two G1 line segments if the curve is nearly straight
-    or the arc fit error is too large.
-
-    Returns a list of G-code strings (without feed rate appended for arcs;
-    caller appends F{feed} for G1s only — arcs inherit the active feed).
-    """
-    MIN_RADIUS  = 0.05   # mm — arcs smaller than this just use G1
-    MAX_ARC_ERR = 0.08   # mm — max deviation of arc from Bezier midpoint
+    MIN_RADIUS  = 0.05
+    MAX_ARC_ERR = 0.08
 
     sp = (p0[0] * scale, p0[1] * scale)
     ep = (p3[0] * scale, p3[1] * scale)
@@ -176,28 +160,23 @@ def _bezier_to_arc_or_lines(p0, p1, p2, p3, scale, feed):
         (p3[0]*scale, p3[1]*scale)
     )
 
-    # Nearly zero-length segment → skip
     seg_len = math.hypot(ep[0]-sp[0], ep[1]-sp[1])
     if seg_len < 1e-6:
         return []
 
     center = _circumcenter(sp, mid, ep)
     if center is None:
-        # Collinear → straight G1
         return [f'G1 X{ep[0]:.4f} Y{ep[1]:.4f} F{feed}']
 
     radius = math.hypot(sp[0]-center[0], sp[1]-center[1])
     if radius < MIN_RADIUS:
         return [f'G1 X{ep[0]:.4f} Y{ep[1]:.4f} F{feed}']
 
-    # Check arc fit quality: distance from arc to Bezier midpoint
     arc_mid_r = math.hypot(mid[0]-center[0], mid[1]-center[1])
     err = abs(arc_mid_r - radius)
     if err > MAX_ARC_ERR:
-        # Poor fit — split into two halves recursively (max 1 level)
         t = 0.5
         mt = 1.0 - t
-        # De Casteljau split
         q0 = p0
         q1 = (mt*p0[0]+t*p1[0], mt*p0[1]+t*p1[1])
         q2 = (mt*q1[0]+t*(mt*p1[0]+t*p2[0]), mt*q1[1]+t*(mt*p1[1]+t*p2[1]))
@@ -206,22 +185,16 @@ def _bezier_to_arc_or_lines(p0, p1, p2, p3, scale, feed):
         mid_pt = (mt*q2[0]+t*r1[0], mt*q2[1]+t*r1[1])
         r0 = mid_pt
         cmds = []
-        cmds += _bezier_to_arc_or_lines(q0, q1, q2, r0, 1.0, feed)  # scale=1 (already scaled)
+        cmds += _bezier_to_arc_or_lines(q0, q1, q2, r0, 1.0, feed)
         cmds += _bezier_to_arc_or_lines(r0, r1, r2, p3, 1.0, feed)
         return cmds
 
-    # Determine CW vs CCW using cross product at start point
     cross = _cross2d(sp[0], sp[1], mid[0], mid[1], ep[0], ep[1])
     ccw = cross > 0
-
     return [_arc_cmd(sp, ep, center, ccw)]
 
 
 def _quad_to_arc_or_lines(p0, cp, p3, scale, feed):
-    """
-    Try to represent a scaled quadratic Bezier as a single G2/G3 arc.
-    Falls back to G1 if straight or poor fit.
-    """
     MIN_RADIUS  = 0.05
     MAX_ARC_ERR = 0.08
 
@@ -245,10 +218,9 @@ def _quad_to_arc_or_lines(p0, cp, p3, scale, feed):
     arc_mid_r = math.hypot(mid[0]-center[0], mid[1]-center[1])
     err = abs(arc_mid_r - radius)
     if err > MAX_ARC_ERR:
-        # Split quadratic at t=0.5
         t = 0.5
         mt = 1.0 - t
-        mid_pt = _quad_midpoint(sp, cps, ep)   # already scaled
+        mid_pt = _quad_midpoint(sp, cps, ep)
         cp1 = ((sp[0]+cps[0])*0.5, (sp[1]+cps[1])*0.5)
         cp2 = ((cps[0]+ep[0])*0.5, (cps[1]+ep[1])*0.5)
         cmds = []
@@ -304,42 +276,67 @@ class GCodeGenerator:
         """
         Generate M4-mode G-code at machine coordinates.
         Returns (gcode_string, actual_width_mm, actual_height_mm).
+
+        If laser_settings.z_depth_mm is non-zero the program will:
+          1. Rapid to Z0 (safe height) before positioning
+          2. Plunge to z_depth_mm after positioning over the start point
+          3. Return to Z0 after engraving completes
         """
         path, width, height = self._build_geometry(
             text, text_height_mm, origin=(x_start, y_start))
         s_on = self._s_value()
 
+        # Read Z depth from live config so it reflects UI changes without restart
+        z_depth = float(config.get('laser_settings.z_depth_mm', 0.0))
+        use_z   = abs(z_depth) > 1e-4
+
         gc = [
             f'; Engrave: {text}',
             f'; Font={self.font_key}  Power={self.laser_power}%  S={s_on}/{self.spindle_max}  Feed={self.speed}',
-            'G21', 'G90',
+        ]
+
+        if use_z:
+            gc.append(f'; Z depth: {z_depth:.3f} mm')
+
+        gc += [
+            'G21',   # mm mode
+            'G90',   # absolute positioning
+        ]
+
+        if use_z:
+            gc.append('G0 Z0')          # ensure we start at Z0
+
+        gc += [
             f'M4 S{s_on}',
             '',
         ]
+
+        if use_z:
+            gc.append(f'G0 Z{z_depth:.4f}')   # plunge to engraving depth
+            gc.append('')
+
         for p in range(passes):
             gc.append(f'; Pass {p+1}/{passes}')
             for entry in path:
                 gc.append(entry)
             gc.append('')
-        gc += ['M5', 'G0 X0 Y0', 'M2']
+
+        gc.append('M5')   # laser off
+
+        if use_z:
+            gc.append('G0 Z0')          # retract to safe height
+
+        gc += ['G0 X0 Y0', 'M2']
+
         return '\n'.join(gc), width, height
 
     # ── Geometry pipeline ─────────────────────────────────────
     def _build_geometry(self, text, text_height_mm, origin=(0.0, 0.0)):
-        """
-        For TTF engine: returns arc/line G-code strings directly.
-        For Hershey engines: converts polylines to G0/G1 strings.
-        """
         if self.engine == 'ttf' and _FONTTOOLS_AVAILABLE and self.ttf_path:
             return self._build_ttf_geometry(text, text_height_mm, origin)
         return self._build_polyline_geometry(text, text_height_mm, origin)
 
     def _build_ttf_geometry(self, text, text_height_mm, origin):
-        """
-        Render TTF text directly to G-code strings with G2/G3 arcs.
-        Applies Y-flip, scaling, and origin offset inline.
-        Returns (gcode_lines_list, width_mm, height_mm).
-        """
         try:
             if self._ttfont is None:
                 self._ttfont = _TTFont(self.ttf_path)
@@ -350,15 +347,13 @@ class GCodeGenerator:
             debug_print(f'TTF load error: {e}, using builtin')
             return self._build_polyline_geometry(text, text_height_mm, origin)
 
-        # scale: font units → mm.  We normalise so cap-height ≈ text_height_mm.
-        # Use unitsPerEm as the height reference (close enough for our purposes).
         scale = text_height_mm / self._units_per_em
         ox, oy = origin
 
         path = []
         all_x = []
         all_y = []
-        cursor_x_u = 0.0   # cursor in font units
+        cursor_x_u = 0.0
 
         for ch in text:
             glyph_name = self._cmap.get(ord(ch))
@@ -374,9 +369,6 @@ class GCodeGenerator:
 
             cmds_raw, advance_u = self._glyph_cache[glyph_name]
 
-            # Convert pen recording to G-code, applying:
-            #   x_machine = ox + (cursor_x_u + x_font) * scale
-            #   y_machine = oy + (-y_font) * scale   ← Y flip
             glyph_cmds, gx, gy = _pen_to_gcode(
                 cmds_raw, scale, cursor_x_u, ox, oy, self.speed)
             path.extend(glyph_cmds)
@@ -393,10 +385,6 @@ class GCodeGenerator:
         return path, width, height
 
     def _build_polyline_geometry(self, text, text_height_mm, origin):
-        """
-        Fallback geometry builder for Hershey/builtin engines.
-        Returns (gcode_lines_list, width_mm, height_mm).
-        """
         polylines = self._glyphs_for_text(text)
         if not polylines:
             return [], 0.0, 0.0
@@ -459,14 +447,13 @@ class GCodeGenerator:
             yield (x1 + px*off, y1 + py*off,
                    x2 + px*off, y2 + py*off)
 
-    # ── Font engines (Hershey only — TTF handled above) ───────
+    # ── Font engines ──────────────────────────────────────────
     def _glyphs_for_text(self, text):
         if self.engine == 'hershey_builtin':
             return _builtin_glyphs(text)
         elif self.engine == 'hershey_lib':
             return self._hershey_lib_glyphs(text)
         elif self.engine == 'ttf':
-            # TTF falls through to builtin if fontTools unavailable
             return _builtin_glyphs(text)
         return _builtin_glyphs(text)
 
@@ -508,27 +495,13 @@ class GCodeGenerator:
 # ── TTF pen-recording → G-code with G2/G3 arcs ───────────────
 
 def _pen_to_gcode(commands, scale, cursor_x_u, ox, oy, feed):
-    """
-    Convert a fontTools RecordingPen command list directly to G-code strings.
-
-    Coordinate transform applied here:
-        x_machine = ox + (cursor_x_u + x_font) * scale
-        y_machine = oy + (-y_font) * scale          ← Y-flip for upright text
-
-    Cubic/quadratic Bezier curves are converted to G2/G3 arcs.
-    Straight lines emit G1.  Pen lifts emit G0.
-
-    Returns (gcode_list, all_x_coords, all_y_coords).
-    """
     def tx(x):  return ox + (cursor_x_u + x) * scale
     def ty(y):  return oy + (-y) * scale
 
-    # For arc helpers we work in machine coords.  We pass scale=1.0 and
-    # pre-transformed points so the arc helpers don't re-scale.
     gcode  = []
     all_x  = []
     all_y  = []
-    cur    = None   # current machine position (x, y)
+    cur    = None
 
     def move_to(mx, my):
         nonlocal cur
@@ -552,20 +525,8 @@ def _pen_to_gcode(commands, scale, cursor_x_u, ox, oy, feed):
             line_to(tx(x), ty(y))
 
         elif op == 'curveTo':
-            # Cubic Bezier in font units → machine coords for arc fitting
-            # pts = (cp1, cp2, endpoint)
             if cur is None:
                 continue
-            # Unscaled font-unit points (scale applied inside arc helper)
-            # We pass font-unit coords and scale separately so De Casteljau
-            # splitting stays in the same unit space.
-            p0f = (( cur[0] - ox) / scale - cursor_x_u,  -( cur[1] - oy) / scale)
-            p1f = (pts[0][0], pts[0][1])
-            p2f = (pts[1][0], pts[1][1])
-            p3f = (pts[2][0], pts[2][1])
-
-            # Build arc/line commands in machine space
-            # We convert points to machine coords and pass scale=1
             mp0 = cur
             mp1 = (tx(pts[0][0]), ty(pts[0][1]))
             mp2 = (tx(pts[1][0]), ty(pts[1][1]))
@@ -584,7 +545,6 @@ def _pen_to_gcode(commands, scale, cursor_x_u, ox, oy, feed):
             endpoint  = all_mpts[-1]
             ctrl_mpts = all_mpts[:-1]
 
-            # Decompose into individual quadratic segments
             segments = []
             prev = cur
             for i, cp in enumerate(ctrl_mpts):
@@ -604,17 +564,12 @@ def _pen_to_gcode(commands, scale, cursor_x_u, ox, oy, feed):
                 cur = ep
 
         elif op in ('closePath', 'endPath'):
-            pass  # laser off handled by G0 on next moveTo
+            pass
 
     return gcode, all_x, all_y
 
 
 def _cubic_to_arc_or_lines_machine(p0, p1, p2, p3, feed):
-    """
-    Fit a G2/G3 arc to a cubic Bezier given in machine coordinates.
-    All inputs are (x, y) machine-space tuples.  scale=1 (already converted).
-    Recursively splits once if arc error is too large.
-    """
     MIN_RADIUS  = 0.05
     MAX_ARC_ERR = 0.08
 
@@ -633,7 +588,6 @@ def _cubic_to_arc_or_lines_machine(p0, p1, p2, p3, feed):
 
     arc_mid_r = math.hypot(mid[0]-center[0], mid[1]-center[1])
     if abs(arc_mid_r - radius) > MAX_ARC_ERR:
-        # Split with De Casteljau at t=0.5
         q1 = ((p0[0]+p1[0])*0.5, (p0[1]+p1[1])*0.5)
         r1 = ((p1[0]+p2[0])*0.5, (p1[1]+p2[1])*0.5)
         r2 = ((p2[0]+p3[0])*0.5, (p2[1]+p3[1])*0.5)
@@ -649,9 +603,6 @@ def _cubic_to_arc_or_lines_machine(p0, p1, p2, p3, feed):
 
 
 def _quad_to_arc_or_lines_machine(p0, cp, p3, feed):
-    """
-    Fit a G2/G3 arc to a quadratic Bezier in machine coordinates.
-    """
     MIN_RADIUS  = 0.05
     MAX_ARC_ERR = 0.08
 
@@ -684,7 +635,6 @@ def _quad_to_arc_or_lines_machine(p0, cp, p3, feed):
 # ── Module-level helpers ──────────────────────────────────────
 
 def _builtin_glyphs(text):
-    """Convert text using HERSHEY_SIMPLEX into a list of polylines."""
     polylines = []
     cursor_x = 0.0
     advance = 10.0
@@ -707,7 +657,6 @@ def _builtin_glyphs(text):
 
 
 def _bounds(polylines):
-    """Return (min_x, min_y, max_x, max_y) across all polylines, or None."""
     xs, ys = [], []
     for poly in polylines:
         for (x, y) in poly:

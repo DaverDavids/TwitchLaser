@@ -25,7 +25,6 @@ engraving_area = {
     'machine_height_mm': 298,
 
     # Active engraving region inside the bed
-    # Example: 100x100 square starting at X=50, Y=100
     'active_width_mm': 100,
     'active_height_mm': 100,
     'offset_x_mm': 50,
@@ -54,6 +53,7 @@ class Config:
                 'speed_mm_per_min': 1000,
                 'passes':           1,
                 'spindle_max':      1000,
+                'z_depth_mm':       0.0,   # Z plunge depth during engraving (0 = disabled)
             },
             'text_settings': {
                 'initial_height_mm': 5.0,
