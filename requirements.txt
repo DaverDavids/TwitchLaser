@@ -4,3 +4,4 @@ opencv-python==4.8.1.78
 pyserial==3.5
 fonttools>=4.43.0
 hershey-fonts>=0.0.2
+obsws-python>=1.0.1

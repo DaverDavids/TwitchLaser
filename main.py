@@ -14,13 +14,14 @@ from laser_controller import LaserController
 from layout_manager import LayoutManager
 from gcode_generator import GCodeGenerator, FONT_PROFILES
 from twitch_monitor import TwitchMonitor
+from obs_controller import OBSController
 
 CAMERA_AVAILABLE = False
 CameraStream = None
 
 from web_server import init_web_server, run_server
 
-# ── Queue state ───────────────────────────────────────────────
+# ── Queue state ─────────────────────────────────────────────
 engraving_queue = deque()
 queue_lock      = threading.Lock()
 processing      = False
@@ -32,20 +33,19 @@ def enqueue_name(name, source='twitch'):
     debug_print(f'Queued: {name}  (from {source})')
 
 
-def process_queue(laser, layout, gcode_gen):
+def process_queue(laser, layout, gcode_gen, obs):
     """Worker thread: pop names from queue, place them, engrave."""
     global processing
 
     while True:
         try:
+            job = None
             with queue_lock:
-                if not engraving_queue or processing:
-                    pass
-                else:
+                if engraving_queue and not processing:
                     processing = True
                     job = engraving_queue.popleft()
 
-            if not processing:
+            if job is None:
                 time.sleep(1)
                 continue
 
@@ -55,10 +55,7 @@ def process_queue(laser, layout, gcode_gen):
             text_height    = config.get('text_settings.initial_height_mm', 5.0)
             laser_settings = config.get('laser_settings', {})
 
-            # True bounding-box size for this name at the requested height
             width, height = gcode_gen.estimate_dimensions(name, text_height)
-
-            # Find a free spot (auto-shrinks if board is filling up)
             position = layout.find_empty_space(width, height, text_height)
 
             if not position:
@@ -74,10 +71,7 @@ def process_queue(laser, layout, gcode_gen):
             y_machine  = y_local + layout.offset_y_mm
 
             gcode, actual_w, actual_h = gcode_gen.text_to_gcode(
-                name,
-                x_machine,
-                y_machine,
-                final_height,
+                name, x_machine, y_machine, final_height,
                 passes=laser_settings.get('passes', 1),
             )
 
@@ -89,7 +83,15 @@ def process_queue(laser, layout, gcode_gen):
                 f"height={final_height:.1f} mm"
             )
 
+            # ─ OBS: engrave start ──────────────────────────────
+            if obs:
+                obs.on_engrave_start(name=name)
+
             success, message = laser.send_gcode(gcode.split('\n'))
+
+            # ─ OBS: engrave finish ────────────────────────────
+            if obs:
+                obs.on_engrave_finish(name=name, success=success)
 
             if success:
                 layout.add_placement(name, x_local, y_local, actual_w, actual_h, final_height)
@@ -97,7 +99,7 @@ def process_queue(laser, layout, gcode_gen):
             else:
                 debug_print(f'Failed: {name} — {message}')
                 with queue_lock:
-                    engraving_queue.appendleft(job)   # retry at front of queue
+                    engraving_queue.appendleft(job)
 
             processing = False
 
@@ -108,13 +110,10 @@ def process_queue(laser, layout, gcode_gen):
 
 
 def _build_gcode_gen():
-    """Create GCodeGenerator from current config values."""
     laser_settings = config.get('laser_settings', {})
     text_settings  = config.get('text_settings',  {})
-
     font_key = text_settings.get('font', 'simplex')
     ttf_path = text_settings.get('ttf_path', None)
-
     gen = GCodeGenerator(
         laser_power      = laser_settings.get('power_percent',    50),
         speed_mm_per_min = laser_settings.get('speed_mm_per_min', 1000),
@@ -135,13 +134,13 @@ def main():
     print('=' * 50)
     print('\nInitializing components...')
 
-    # ── Laser ─────────────────────────────────────────────────
+    # ── Laser ─────────────────────────────────────────────
     print('Connecting to FluidNC...')
     laser = LaserController()
     if not laser.connected:
         print('WARNING: FluidNC not connected.')
 
-    # ── Layout ────────────────────────────────────────────────
+    # ── Layout ────────────────────────────────────────────
     ea = config.get('engraving_area', {})
     layout = LayoutManager(
         width_mm          = ea.get('active_width_mm',   None),
@@ -154,10 +153,18 @@ def main():
     print(f'Layout: active {layout.width_mm}x{layout.height_mm} mm  '
           f'offset ({layout.offset_x_mm},{layout.offset_y_mm})')
 
-    # ── G-code generator ──────────────────────────────────────
+    # ── G-code generator ──────────────────────────────────
     gcode_gen = _build_gcode_gen()
 
-    # ── Twitch monitor ────────────────────────────────────────
+    # ── OBS controller ───────────────────────────────────
+    print('Initializing OBS controller...')
+    obs = OBSController()
+    if obs.is_connected():
+        print('OBS WebSocket connected')
+    else:
+        print('OBS not connected (disabled or unavailable)')
+
+    # ── Twitch monitor ───────────────────────────────────
     twitch = TwitchMonitor(enqueue_callback=enqueue_name)
     if config.get('twitch_enabled', True):
         print('Starting Twitch monitor...')
@@ -166,20 +173,20 @@ def main():
         else:
             print('WARNING: Twitch monitor failed to start')
 
-    camera = None   # camera disabled
+    camera = None
 
-    # ── Queue processor thread ────────────────────────────────
+    # ── Queue processor thread ─────────────────────────────
     print('Starting queue processor...')
     queue_thread = threading.Thread(
         target=process_queue,
-        args=(laser, layout, gcode_gen),
+        args=(laser, layout, gcode_gen, obs),
         daemon=True,
     )
     queue_thread.start()
 
-    # ── Web server ────────────────────────────────────────────
+    # ── Web server ─────────────────────────────────────────
     print('Starting web server...')
-    init_web_server(laser, layout, gcode_gen, twitch, camera, engraving_queue)
+    init_web_server(laser, layout, gcode_gen, twitch, camera, engraving_queue, obs)
 
     hostname = config.get('hostname', 'twitchlaser')
     port     = 5000
