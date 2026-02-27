@@ -77,7 +77,30 @@ def process_queue(laser, layout, gcode_gen, obs):
                 laser_settings = config.get('laser_settings', {})
 
                 width, height = gcode_gen.estimate_dimensions(name, text_height)
-                position = layout.find_empty_space(width, height, text_height)
+                
+                # Check if UI sent manual coordinate overrides
+                override_rect = job['settings'].get('override_rect') if job.get('settings') else None
+                
+                if override_rect:
+                    # User manually specified a box, map it directly
+                    x1 = min(override_rect['x1'], override_rect['x2'])
+                    y1 = min(override_rect['y1'], override_rect['y2'])
+                    manual_w = abs(override_rect['x2'] - override_rect['x1'])
+                    manual_h = abs(override_rect['y2'] - override_rect['y1'])
+                    
+                    # Convert to local coordinates for the layout manager
+                    x_local = x1 - layout.offset_x_mm
+                    y_local = y1 - layout.offset_y_mm
+                    
+                    # Estimate a max text height that fits in this manual box
+                    # We preserve the aspect ratio of the text inside the box
+                    scale_factor = min(manual_w / width, manual_h / height) if width > 0 and height > 0 else 1.0
+                    final_height = text_height * scale_factor
+                    position = (x_local, y_local, final_height)
+                    debug_print(f"Using manual position override: {override_rect}")
+                else:
+                    # Standard auto-placement
+                    position = layout.find_empty_space(width, height, text_height)
 
                 if not position:
                     debug_print(f"No space for '{name}' — requeueing")
