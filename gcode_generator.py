@@ -141,102 +141,12 @@ def _quad_midpoint(p0, cp, p3):
 
 
 def _arc_cmd(start, end, center, ccw, feed, ox=0, oy=0):
+    # I and J are relative to the start point (which has already had ox/oy added during execution)
+    # So we don't need to add ox/oy to i and j!
     i = center[0] - start[0]
     j = center[1] - start[1]
     cmd = 'G3' if ccw else 'G2'
     return f'{cmd} X{end[0]+ox:.4f} Y{end[1]+oy:.4f} I{i:.4f} J{j:.4f} F{feed}'
-
-
-def _bezier_to_arc_or_lines(p0, p1, p2, p3, scale, feed):
-    MIN_RADIUS  = 0.05
-    MAX_ARC_ERR = 0.08
-
-    sp = (p0[0] * scale, p0[1] * scale)
-    ep = (p3[0] * scale, p3[1] * scale)
-    mid = _bezier_midpoint(
-        (p0[0]*scale, p0[1]*scale),
-        (p1[0]*scale, p1[1]*scale),
-        (p2[0]*scale, p2[1]*scale),
-        (p3[0]*scale, p3[1]*scale)
-    )
-
-    seg_len = math.hypot(ep[0]-sp[0], ep[1]-sp[1])
-    if seg_len < 1e-6:
-        return []
-
-    center = _circumcenter(sp, mid, ep)
-    if center is None:
-        return [(f'G1 X{{0:.4f}} Y{{1:.4f}} F{feed}', ep[0], ep[1])]
-
-    radius = math.hypot(sp[0]-center[0], sp[1]-center[1])
-    if radius < MIN_RADIUS:
-        return [(f'G1 X{{0:.4f}} Y{{1:.4f}} F{feed}', ep[0], ep[1])]
-
-    arc_mid_r = math.hypot(mid[0]-center[0], mid[1]-center[1])
-    err = abs(arc_mid_r - radius)
-    if err > MAX_ARC_ERR:
-        t = 0.5
-        mt = 1.0 - t
-        q0 = p0
-        q1 = (mt*p0[0]+t*p1[0], mt*p0[1]+t*p1[1])
-        q2 = (mt*q1[0]+t*(mt*p1[0]+t*p2[0]), mt*q1[1]+t*(mt*p1[1]+t*p2[1]))
-        r2 = (mt*p2[0]+t*p3[0], mt*p2[1]+t*p3[1])
-        r1 = (mt*(mt*p1[0]+t*p2[0])+t*r2[0], mt*(mt*p1[1]+t*p2[1])+t*r2[1])
-        mid_pt = (mt*q2[0]+t*r1[0], mt*q2[1]+t*r1[1])
-        r0 = mid_pt
-        cmds = []
-        cmds += _bezier_to_arc_or_lines(q0, q1, q2, r0, 1.0, feed)
-        cmds += _bezier_to_arc_or_lines(r0, r1, r2, p3, 1.0, feed)
-        return cmds
-
-    cross = _cross2d(sp[0], sp[1], mid[0], mid[1], ep[0], ep[1])
-    ccw = cross > 0
-    return [(lambda ox, oy: _arc_cmd(sp, ep, center, ccw, feed, ox, oy), None, None)]
-
-
-def _quad_to_arc_or_lines(p0, cp, p3, scale, feed):
-    MIN_RADIUS  = 0.05
-    MAX_ARC_ERR = 0.08
-
-    sp  = (p0[0] * scale, p0[1] * scale)
-    ep  = (p3[0] * scale, p3[1] * scale)
-    cps = (cp[0] * scale, cp[1] * scale)
-    mid = _quad_midpoint(sp, cps, ep)
-
-    seg_len = math.hypot(ep[0]-sp[0], ep[1]-sp[1])
-    if seg_len < 1e-6:
-        return []
-
-    center = _circumcenter(sp, mid, ep)
-    if center is None:
-        return [(f'G1 X{{0:.4f}} Y{{1:.4f}} F{feed}', ep[0], ep[1])]
-
-    radius = math.hypot(sp[0]-center[0], sp[1]-center[1])
-    if radius < MIN_RADIUS:
-        return [(f'G1 X{{0:.4f}} Y{{1:.4f}} F{feed}', ep[0], ep[1])]
-
-    arc_mid_r = math.hypot(mid[0]-center[0], mid[1]-center[1])
-    err = abs(arc_mid_r - radius)
-    if err > MAX_ARC_ERR:
-        t = 0.5
-        mt = 1.0 - t
-        mid_pt = _quad_midpoint(sp, cps, ep)
-        cp1 = ((sp[0]+cps[0])*0.5, (sp[1]+cps[1])*0.5)
-        cp2 = ((cps[0]+ep[0])*0.5, (cps[1]+ep[1])*0.5)
-        cmds = []
-        cmds += _quad_to_arc_or_lines(
-            (sp[0]/scale,  sp[1]/scale),
-            (cp1[0]/scale, cp1[1]/scale),
-            (mid_pt[0]/scale, mid_pt[1]/scale), scale, feed)
-        cmds += _quad_to_arc_or_lines(
-            (mid_pt[0]/scale, mid_pt[1]/scale),
-            (cp2[0]/scale, cp2[1]/scale),
-            (p3[0], p3[1]), scale, feed)
-        return cmds
-
-    cross = _cross2d(sp[0], sp[1], mid[0], mid[1], ep[0], ep[1])
-    ccw = cross > 0
-    return [(lambda ox, oy: _arc_cmd(sp, ep, center, ccw, feed, ox, oy), None, None)]
 
 
 # ── Main class ────────────────────────────────────────────────
@@ -376,14 +286,11 @@ class GCodeGenerator:
             debug_print(f'TTF load error: {e}, using builtin')
             return self._build_polyline_geometry(text, text_height_mm, origin, flip_y)
 
-        scale = text_height_mm / self._units_per_em
-        ox, oy = origin
-
-        path = []
-        all_x = []
-        all_y = []
+        # 1. First pass: extract raw glyph paths unscaled and unshifted to calculate bounds
+        # fontTools units are usually large ints (e.g. 0 to 1000 or 0 to 2048)
+        raw_paths = []
         cursor_x_u = 0.0
-
+        
         for ch in text:
             glyph_name = self._cmap.get(ord(ch))
             if not glyph_name:
@@ -397,20 +304,45 @@ class GCodeGenerator:
                 self._glyph_cache[glyph_name] = (pen.value, adv)
 
             cmds_raw, advance_u = self._glyph_cache[glyph_name]
-
-            glyph_cmds, gx, gy = _pen_to_gcode(
-                cmds_raw, scale, cursor_x_u, ox, oy, self.speed, flip_y)
-            path.extend(glyph_cmds)
-            all_x.extend(gx)
-            all_y.extend(gy)
-
+            raw_paths.append((cmds_raw, cursor_x_u))
             cursor_x_u += advance_u
 
-        if not all_x:
+        if not raw_paths:
             return [], 0.0, 0.0
 
-        width  = max(all_x) - min(all_x)
-        height = max(all_y) - min(all_y)
+        # 2. Find vertical bounds to calculate proper scaling
+        all_y_u = []
+        for cmds_raw, offset_u in raw_paths:
+            for op, pts in cmds_raw:
+                if pts:
+                    for pt in pts:
+                        all_y_u.append(pt[1])
+                        
+        if not all_y_u:
+            return [], 0.0, 0.0
+            
+        min_y_u = min(all_y_u)
+        max_y_u = max(all_y_u)
+        height_u = max_y_u - min_y_u or self._units_per_em
+        
+        # Exact scale to make the drawn height equal to text_height_mm
+        scale = text_height_mm / height_u
+        ox, oy = origin
+
+        # 3. Second pass: scale, shift, and convert to G-Code closures
+        path = []
+        all_x_mm = []
+        all_y_mm = []
+
+        for cmds_raw, offset_u in raw_paths:
+            glyph_cmds, gx, gy = _pen_to_gcode(
+                cmds_raw, scale, offset_u, ox, oy, min_y_u, self.speed, flip_y)
+            path.extend(glyph_cmds)
+            all_x_mm.extend(gx)
+            all_y_mm.extend(gy)
+
+        width  = max(all_x_mm) - min(all_x_mm) if all_x_mm else 0.0
+        height = max(all_y_mm) - min(all_y_mm) if all_y_mm else 0.0
         return path, width, height
 
     def _build_polyline_geometry(self, text, text_height_mm, origin, flip_y):
@@ -530,9 +462,17 @@ class GCodeGenerator:
 
 # ── TTF pen-recording → G-code with G2/G3 arcs ───────────────
 
-def _pen_to_gcode(commands, scale, cursor_x_u, ox, oy, feed, flip_y):
+def _pen_to_gcode(commands, scale, cursor_x_u, ox, oy, min_y_u, feed, flip_y):
+    # Map from font coordinates to final mm coords with offset
+    # font coordinates normally have y=0 at baseline
     def tx(x):  return ox + (cursor_x_u + x) * scale
-    def ty(y):  return oy + ((-y) if flip_y else y) * scale
+    
+    def ty(y):  
+        # Shift the raw y so the lowest point is exactly at y=0, then scale
+        y_shifted = (y - min_y_u) * scale
+        if flip_y:
+            return oy - y_shifted
+        return oy + y_shifted
 
     gcode  = []
     all_x  = []
