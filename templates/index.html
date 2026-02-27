@@ -7,19 +7,30 @@
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: 'Segoe UI', sans-serif; background: #0e0e10; color: #efeff1; padding: 20px; }
-        h1 { text-align: center; font-size: 1.6rem; margin-bottom: 20px; color: #9147ff; letter-spacing: 1px; }
-
-        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; max-width: 1400px; margin: 0 auto; }
-        .full-width { grid-column: 1 / -1; }
-
-        .card { background: #18181b; border: 1px solid #2d2d35; border-radius: 10px; padding: 18px; }
-        .card h3 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 1px; color: #9147ff; margin-bottom: 14px; border-bottom: 1px solid #2d2d35; padding-bottom: 8px; }
-
-        .status-row { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+        
+        /* HEADER AND STATUS */
+        .header-container { max-width: 1400px; margin: 0 auto 20px auto; background: #18181b; border: 1px solid #2d2d35; border-radius: 10px; padding: 16px 20px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 15px; }
+        .header-title { font-size: 1.5rem; color: #9147ff; letter-spacing: 1px; font-weight: bold; margin: 0; }
+        
+        .status-row { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; }
         .status-item { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; }
         .dot { width: 10px; height: 10px; border-radius: 50%; background: #464649; flex-shrink: 0; }
         .dot.on   { background: #00c853; box-shadow: 0 0 6px #00c853; }
         .dot.warn { background: #ffa000; box-shadow: 0 0 6px #ffa000; }
+        .badge { display: inline-block; background: #2d2d35; border-radius: 4px; padding: 2px 8px; font-size: 0.78rem; font-family: monospace; }
+        .stat-group { display: flex; gap: 12px; border-left: 1px solid #3a3a43; padding-left: 16px; margin-left: 4px; }
+
+        /* GRID LAYOUT */
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; max-width: 1400px; margin: 0 auto; }
+        .full-width { grid-column: 1 / -1; }
+        
+        /* For standard 3-column layouts, making something span 2 columns without being full screen */
+        @media (min-width: 768px) {
+            .span-2 { grid-column: span 2; }
+        }
+
+        .card { background: #18181b; border: 1px solid #2d2d35; border-radius: 10px; padding: 18px; }
+        .card h3 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 1px; color: #9147ff; margin-bottom: 14px; border-bottom: 1px solid #2d2d35; padding-bottom: 8px; }
 
         button { background: #9147ff; color: #fff; border: none; border-radius: 6px; padding: 8px 14px; cursor: pointer; font-size: 0.85rem; transition: background 0.15s; }
         button:hover         { background: #772ce8; }
@@ -53,7 +64,6 @@
 
         #log { font-family: monospace; font-size: 0.78rem; color: #adadb8; background: #0e0e10; border: 1px solid #2d2d35; border-radius: 6px; padding: 10px; max-height: 160px; overflow-y: auto; line-height: 1.6; }
 
-        .badge { display: inline-block; background: #2d2d35; border-radius: 4px; padding: 2px 8px; font-size: 0.78rem; font-family: monospace; }
         #queue-list { font-size: 0.82rem; color: #adadb8; line-height: 2; }
         .save-ok { color: #00c853; font-size: 0.8rem; margin-left: 8px; display: none; }
 
@@ -73,25 +83,24 @@
 </head>
 <body>
 
-<h1>&#128308; TwitchLaser Control</h1>
-
-<div class="grid">
-
-    <!-- STATUS -->
-    <div class="card">
-        <h3>System Status</h3>
-        <div class="status-row">
-            <div class="status-item"><span class="dot" id="dot-laser"></span> Laser</div>
-            <div class="status-item"><span class="dot" id="dot-twitch"></span> Twitch</div>
-            <div class="status-item"><span class="dot" id="dot-camera"></span> Camera</div>
-            <div class="status-item"><span class="dot" id="dot-obs"></span> OBS</div>
-        </div>
-        <div style="margin-top:12px; display:flex; gap:16px; flex-wrap:wrap;">
-            <span>Queue: <span class="badge" id="stat-queue">0</span></span>
-            <span>Names: <span class="badge" id="stat-names">0</span></span>
-            <span>Coverage: <span class="badge" id="stat-coverage">0%</span></span>
+<div class="header-container">
+    <h1 class="header-title">&#128308; TwitchLaser Control</h1>
+    
+    <div class="status-row">
+        <div class="status-item"><span class="dot" id="dot-laser"></span> Laser</div>
+        <div class="status-item"><span class="dot" id="dot-twitch"></span> Twitch</div>
+        <div class="status-item"><span class="dot" id="dot-camera"></span> Camera</div>
+        <div class="status-item"><span class="dot" id="dot-obs"></span> OBS</div>
+        
+        <div class="stat-group">
+            <div class="status-item">Queue: <span class="badge" id="stat-queue">0</span></div>
+            <div class="status-item">Names: <span class="badge" id="stat-names">0</span></div>
+            <div class="status-item">Coverage: <span class="badge" id="stat-coverage">0%</span></div>
         </div>
     </div>
+</div>
+
+<div class="grid">
 
     <!-- LASER CONTROLS -->
     <div class="card">
@@ -103,9 +112,8 @@
         </div>
         <div class="btn-row">
             <button class="secondary" onclick="toggleTwitch()" id="btn-twitch">&#9654; Start Twitch</button>
-            <button class="secondary" onclick="reconnectLaser()">&#128279; Reconnect Laser</button>
-            <button class="secondary" onclick="reconnectTwitch()">&#128279; Reconnect Twitch</button>
-            <button class="secondary" onclick="reconnectOBS()">&#128279; Reconnect OBS</button>
+            <button class="secondary" onclick="reconnectLaser()">&#128279; Reconn. Laser</button>
+            <button class="secondary" onclick="reconnectTwitch()">&#128279; Reconn. Twitch</button>
         </div>
         <label style="margin-top:14px;">Manual G-code</label>
         <div style="display:flex; gap:6px;">
@@ -119,14 +127,13 @@
         <h3>Test Engrave</h3>
         <label>Text to engrave</label>
         <input type="text" id="test-text" placeholder="e.g. TestUser" maxlength="24">
-        <label style="margin-top:10px;">Override position <span style="color:#6b6b78; font-weight:normal;">(optional &mdash; leave blank for auto-place)</span></label>
+        <label style="margin-top:10px;">Override position <span style="color:#6b6b78; font-weight:normal;">(optional)</span></label>
         <div class="coord-row">
-            <div><label>X1 (mm)</label><input type="number" id="te-x1" placeholder="auto" step="0.1"></div>
-            <div><label>Y1 (mm)</label><input type="number" id="te-y1" placeholder="auto" step="0.1"></div>
-            <div><label>X2 (mm)</label><input type="number" id="te-x2" placeholder="auto" step="0.1"></div>
-            <div><label>Y2 (mm)</label><input type="number" id="te-y2" placeholder="auto" step="0.1"></div>
+            <div><label>X1</label><input type="number" id="te-x1" placeholder="auto" step="0.1"></div>
+            <div><label>Y1</label><input type="number" id="te-y1" placeholder="auto" step="0.1"></div>
+            <div><label>X2</label><input type="number" id="te-x2" placeholder="auto" step="0.1"></div>
+            <div><label>Y2</label><input type="number" id="te-y2" placeholder="auto" step="0.1"></div>
         </div>
-        <p class="hint">Machine coordinates of rectangle. All four required to use override.</p>
         <div class="btn-row" style="margin-top:10px;">
             <button class="success" onclick="testEngrave()">&#9654; Engrave Now</button>
         </div>
@@ -136,15 +143,15 @@
     <!-- MANUAL PLACEMENT -->
     <div class="card">
         <h3>Add Manual Placement</h3>
-        <p style="font-size:0.78rem; color:#adadb8; margin-bottom:8px;">Block out a region without engraving &mdash; for names already on the board but not in the database.</p>
+        <p style="font-size:0.78rem; color:#adadb8; margin-bottom:8px;">Block out a region without engraving.</p>
         <label>Name / label</label>
         <input type="text" id="mp-name" placeholder="e.g. ExistingName" maxlength="40">
         <label style="margin-top:10px;">Rectangle (machine coordinates)</label>
         <div class="coord-row">
-            <div><label>X1 (mm)</label><input type="number" id="mp-x1" placeholder="0" step="0.1"></div>
-            <div><label>Y1 (mm)</label><input type="number" id="mp-y1" placeholder="0" step="0.1"></div>
-            <div><label>X2 (mm)</label><input type="number" id="mp-x2" placeholder="20" step="0.1"></div>
-            <div><label>Y2 (mm)</label><input type="number" id="mp-y2" placeholder="8" step="0.1"></div>
+            <div><label>X1</label><input type="number" id="mp-x1" placeholder="0" step="0.1"></div>
+            <div><label>Y1</label><input type="number" id="mp-y1" placeholder="0" step="0.1"></div>
+            <div><label>X2</label><input type="number" id="mp-x2" placeholder="20" step="0.1"></div>
+            <div><label>Y2</label><input type="number" id="mp-y2" placeholder="8" step="0.1"></div>
         </div>
         <div class="btn-row">
             <button onclick="addManualPlacement()">&#43; Add to Database</button>
@@ -152,60 +159,53 @@
         <div id="mp-result" style="margin-top:8px; font-size:0.8rem; color:#adadb8;"></div>
     </div>
 
-    <!-- OBS SETTINGS -->
-    <div class="card full-width">
-        <h3>&#127909; OBS WebSocket Integration</h3>
-        <p style="font-size:0.78rem; color:#adadb8; margin-bottom:12px;">
-            OBS 28+ has WebSocket built-in. Enable it in OBS under <strong>Tools &rarr; WebSocket Server Settings</strong>.
-            Enter the LAN IP of the PC running OBS below.
-        </p>
+    <!-- TEXT / FONT SETTINGS -->
+    <div class="card span-2">
+        <h3>Text &amp; Font Settings</h3>
         <div class="form-grid">
             <div>
-                <label>Enabled</label>
-                <select id="obs-enabled">
-                    <option value="false">Disabled</option>
-                    <option value="true">Enabled</option>
-                </select>
-            </div>
-            <div></div>
-            <div>
-                <label>OBS Host (LAN IP)</label>
-                <input type="text" id="obs-host" placeholder="192.168.1.100">
+                <label>Initial Height (mm)</label>
+                <input type="number" id="s-height" min="2" max="50" step="0.5" value="5">
             </div>
             <div>
-                <label>Port</label>
-                <input type="number" id="obs-port" value="4455" min="1" max="65535">
+                <label>Min Height (mm)</label>
+                <input type="number" id="s-min-height" min="1" max="20" step="0.5" value="2">
             </div>
             <div style="grid-column:1/-1">
-                <label>Password</label>
-                <input type="text" id="obs-password" placeholder="your_obs_ws_password">
+                <label>Font</label>
+                <select id="s-font"></select>
+            </div>
+            
+            <!-- BOLDING OPTIONS -->
+            <div>
+                <label>Bolding / Retrace Repeats</label>
+                <input type="number" id="s-bold-repeats" min="1" max="10" step="1" value="1">
+                <p class="hint">1 = normal, >1 adds offset paths</p>
+            </div>
+            <div>
+                <label>Bolding Offset (mm)</label>
+                <input type="number" id="s-bold-offset" min="0.05" max="2.0" step="0.05" value="0.15">
+            </div>
+            <div>
+                <label>Bolding Pattern</label>
+                <select id="s-bold-pattern">
+                    <option value="cross">Cross (+ shape)</option>
+                    <option value="circle">Circular (rounded)</option>
+                </select>
+            </div>
+            <div>
+                <label>Y-Axis Text Direction</label>
+                <select id="s-mirror-y">
+                    <option value="false">Standard CNC (+Y is UP/AWAY)</option>
+                    <option value="true">Mirrored (+Y is DOWN/TOWARD)</option>
+                </select>
+                <p class="hint">Flips text vertically</p>
             </div>
         </div>
-
-        <div class="obs-action-group">
-            <h4>&#9654; Engrave Start Actions (JSON array)</h4>
-            <p class="hint" style="margin-bottom:6px;">Runs when engraving begins. Types: <code>show_source</code>, <code>hide_source</code>, <code>switch_scene</code>, <code>trigger_hotkey</code>, <code>set_text</code> (use <code>{name}</code> for subscriber name).</p>
-            <textarea id="obs-start-actions" rows="5" placeholder='[
-  { "type": "show_source", "scene": "Live", "source": "LaserOverlay" },
-  { "type": "set_text", "scene": "Live", "source": "NowEngravingLabel", "text": "Engraving: {name}" }
-]'></textarea>
-        </div>
-
-        <div class="obs-action-group">
-            <h4>&#9646;&#9646; Engrave Finish Actions (JSON array)</h4>
-            <textarea id="obs-finish-actions" rows="4" placeholder='[
-  { "type": "hide_source", "scene": "Live", "source": "LaserOverlay" }
-]'></textarea>
-        </div>
-
         <div class="btn-row">
-            <button onclick="saveOBSSettings()">&#128190; Save OBS Settings</button>
-            <button class="secondary" onclick="reconnectOBS()">&#128279; Reconnect</button>
-            <button class="secondary" onclick="testOBS('start')">&#9654; Test Start Actions</button>
-            <button class="secondary" onclick="testOBS('finish')">&#9646;&#9646; Test Finish Actions</button>
-            <span class="save-ok" id="obs-ok">&#10003; Saved</span>
+            <button onclick="saveTextSettings()">&#128190; Save Text Settings</button>
+            <span class="save-ok" id="text-ok">&#10003; Saved</span>
         </div>
-        <div id="obs-result" style="margin-top:8px; font-size:0.8rem; color:#adadb8;"></div>
     </div>
 
     <!-- LASER SETTINGS -->
@@ -229,50 +229,69 @@
                 <input type="number" id="s-passes" min="1" max="5" step="1" value="1">
             </div>
             <div style="grid-column:1/-1">
-                <label>Z Depth (mm) <span style="color:#6b6b78; font-weight:normal;">&#8212; 0 = disabled (no Z motion)</span></label>
-                <input type="number" id="s-z-depth" min="-50" max="50" step="0.1" value="0" placeholder="0">
-                <p class="hint">Positive = move toward material. Machine rapids to this Z before engraving, returns to Z0 when done.</p>
+                <label>Z Height (mm) <span style="color:#6b6b78; font-weight:normal;">&#8212; 0 = disabled</span></label>
+                <input type="number" id="s-z-height" min="0" max="100" step="0.1" value="0" placeholder="0">
+                <p class="hint">Raises Z to this position before engraving.</p>
             </div>
         </div>
         <div class="btn-row">
-            <button onclick="saveLaserSettings()">&#128190; Save Settings</button>
+            <button onclick="saveLaserSettings()">&#128190; Save Laser Settings</button>
             <span class="save-ok" id="laser-ok">&#10003; Saved</span>
         </div>
     </div>
 
-    <!-- TEXT / FONT SETTINGS -->
-    <div class="card">
-        <h3>Text &amp; Font Settings</h3>
+    <!-- OBS SETTINGS -->
+    <div class="card span-2">
+        <h3>&#127909; OBS WebSocket Integration</h3>
+        <p style="font-size:0.78rem; color:#adadb8; margin-bottom:12px;">
+            Enable WebSocket in OBS under <strong>Tools &rarr; WebSocket Server Settings</strong>.
+        </p>
         <div class="form-grid">
             <div>
-                <label>Initial Height (mm)</label>
-                <input type="number" id="s-height" min="2" max="50" step="0.5" value="5">
+                <label>Enabled</label>
+                <select id="obs-enabled">
+                    <option value="false">Disabled</option>
+                    <option value="true">Enabled</option>
+                </select>
             </div>
             <div>
-                <label>Min Height (mm)</label>
-                <input type="number" id="s-min-height" min="1" max="20" step="0.5" value="2">
+                <label>OBS Host (LAN IP)</label>
+                <input type="text" id="obs-host" placeholder="192.168.1.100">
             </div>
-            <div style="grid-column:1/-1">
-                <label>Font</label>
-                <select id="s-font"></select>
+            <div>
+                <label>Port</label>
+                <input type="number" id="obs-port" value="4455" min="1" max="65535">
             </div>
-            <div style="grid-column:1/-1">
-                <label>TTF Font Path (required for TrueType options)</label>
-                <input type="text" id="s-ttf-path" placeholder="/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf">
+            <div>
+                <label>Password</label>
+                <input type="password" id="obs-password" placeholder="your_obs_ws_password">
             </div>
         </div>
+
+        <div class="obs-action-group">
+            <h4>&#9654; Engrave Start Actions (JSON array)</h4>
+            <p class="hint" style="margin-bottom:6px;">Runs when engraving begins. Use <code>{name}</code> for sub name.</p>
+            <textarea id="obs-start-actions" rows="4" placeholder='[{"type":"show_source","scene":"Live","source":"Laser"}]'></textarea>
+        </div>
+
+        <div class="obs-action-group">
+            <h4>&#9646;&#9646; Engrave Finish Actions (JSON array)</h4>
+            <textarea id="obs-finish-actions" rows="3" placeholder='[{"type":"hide_source","scene":"Live","source":"Laser"}]'></textarea>
+        </div>
+
         <div class="btn-row">
-            <button onclick="saveTextSettings()">&#128190; Save</button>
-            <span class="save-ok" id="text-ok">&#10003; Saved</span>
+            <button onclick="saveOBSSettings()">&#128190; Save OBS</button>
+            <button class="secondary" onclick="reconnectOBS()">&#128279; Reconnect</button>
+            <button class="secondary" onclick="testOBS('start')">&#9654; Test Start</button>
+            <button class="secondary" onclick="testOBS('finish')">&#9646;&#9646; Test Finish</button>
+            <span class="save-ok" id="obs-ok">&#10003; Saved</span>
         </div>
+        <div id="obs-result" style="margin-top:8px; font-size:0.8rem; color:#adadb8;"></div>
     </div>
 
     <!-- WORK AREA -->
     <div class="card">
         <h3>Work Area</h3>
-        <p style="font-size:0.78rem; color:#adadb8; margin-bottom:8px;">
-            Machine bed = full travel range. Active = engraving region. Offset = top-left of active region in machine space.
-        </p>
         <div class="form-grid">
             <div><label>Machine Width (mm)</label><input type="number" id="wa-mw" min="1" max="2000" step="1" value="200"></div>
             <div><label>Machine Height (mm)</label><input type="number" id="wa-mh" min="1" max="2000" step="1" value="298"></div>
@@ -287,17 +306,13 @@
         </div>
     </div>
 
-    <!-- QUEUE -->
+    <!-- QUEUE & SYSTEM -->
     <div class="card">
         <h3>Engraving Queue <span class="badge" id="queue-badge">0</span></h3>
-        <div id="queue-list">Queue is empty</div>
-    </div>
-
-    <!-- DANGER ZONE -->
-    <div class="card">
+        <div id="queue-list" style="margin-bottom: 20px;">Queue is empty</div>
+        
         <h3>&#9888;&#65039; System Controls</h3>
         <div class="danger-zone">
-            <p>Irreversible or disruptive actions.</p>
             <div class="btn-row">
                 <button class="danger" onclick="resetBoard()">&#128465; Reset Board</button>
                 <button class="warn"   onclick="restartService()">&#128260; Restart Service</button>
@@ -305,18 +320,12 @@
         </div>
     </div>
 
-    <!-- LOG -->
-    <div class="card full-width">
-        <h3>Activity Log</h3>
-        <div id="log"></div>
-    </div>
-
     <!-- VISUALIZER -->
-    <div class="card full-width">
+    <div class="card span-2">
         <h3>Layout Visualizer</h3>
         <div id="visualizer-wrap">
             <div style="position:relative;">
-                <canvas id="layout-canvas" width="720" height="520"></canvas>
+                <canvas id="layout-canvas" width="600" height="420"></canvas>
                 <div id="canvas-tooltip"></div>
             </div>
             <div id="canvas-legend">
@@ -326,6 +335,12 @@
                 <div style="margin-top:12px; color:#efeff1; font-size:0.8rem; line-height:1.9;" id="vis-info">Loading...</div>
             </div>
         </div>
+    </div>
+
+    <!-- LOG -->
+    <div class="card">
+        <h3>Activity Log</h3>
+        <div id="log"></div>
     </div>
 
 </div>
@@ -367,11 +382,17 @@ async function updateStatus() {
             setVal('s-spindle-max',ls.spindle_max       || 1000);
             setVal('s-speed',      ls.speed_mm_per_min  || 1000);
             setVal('s-passes',     ls.passes            || 1);
-            setVal('s-z-depth',    ls.z_depth_mm        !== undefined ? ls.z_depth_mm : 0);
+            setVal('s-z-height',   ls.z_height_mm !== undefined ? ls.z_height_mm : (ls.z_depth_mm !== undefined ? ls.z_depth_mm : 0));
             setVal('s-height',     ts2.initial_height_mm || 5);
             setVal('s-min-height', ts2.min_height_mm     || 2);
+            
+            // New Bolding & Mirror settings
+            setVal('s-bold-repeats', ts2.bold_repeats || 1);
+            setVal('s-bold-offset',  ts2.bold_offset_mm || 0.15);
+            if (ts2.bold_pattern) setVal('s-bold-pattern', ts2.bold_pattern);
+            if (ts2.mirror_y !== undefined) setVal('s-mirror-y', ts2.mirror_y ? 'true' : 'false');
+            
             if (ts2.font)     setVal('s-font',     ts2.font);
-            if (ts2.ttf_path) setVal('s-ttf-path', ts2.ttf_path);
             window._settingsLoaded = true;
         }
     } catch(e) {}
@@ -510,7 +531,7 @@ async function saveLaserSettings() {
         spindle_max:      +document.getElementById('s-spindle-max').value,
         speed_mm_per_min: +document.getElementById('s-speed').value,
         passes:           +document.getElementById('s-passes').value,
-        z_depth_mm:       +document.getElementById('s-z-depth').value
+        z_height_mm:      +document.getElementById('s-z-height').value
     }};
     await api('/api/config','POST',body);
     flashOk('laser-ok'); log('Laser settings saved','#00c853');
@@ -519,11 +540,14 @@ async function saveLaserSettings() {
 // TEXT / FONT SETTINGS
 async function saveTextSettings() {
     var font=document.getElementById('s-font').value;
-    var ttfPath=document.getElementById('s-ttf-path').value.trim();
     var body = { text_settings: {
         initial_height_mm: parseFloat(document.getElementById('s-height').value),
         min_height_mm:     parseFloat(document.getElementById('s-min-height').value),
-        font: font, ttf_path: ttfPath||null
+        font: font,
+        bold_repeats:   parseInt(document.getElementById('s-bold-repeats').value),
+        bold_offset_mm: parseFloat(document.getElementById('s-bold-offset').value),
+        bold_pattern:   document.getElementById('s-bold-pattern').value,
+        mirror_y:       document.getElementById('s-mirror-y').value === 'true'
     }};
     await api('/api/config','POST',body);
     flashOk('text-ok'); log('Text settings saved — font: '+font,'#00c853');

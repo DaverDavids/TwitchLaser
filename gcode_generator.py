@@ -140,11 +140,11 @@ def _quad_midpoint(p0, cp, p3):
     return x, y
 
 
-def _arc_cmd(start, end, center, ccw, feed):
+def _arc_cmd(start, end, center, ccw, feed, ox=0, oy=0):
     i = center[0] - start[0]
     j = center[1] - start[1]
     cmd = 'G3' if ccw else 'G2'
-    return f'{cmd} X{end[0]:.4f} Y{end[1]:.4f} I{i:.4f} J{j:.4f} F{feed}'
+    return f'{cmd} X{end[0]+ox:.4f} Y{end[1]+oy:.4f} I{i:.4f} J{j:.4f} F{feed}'
 
 
 def _bezier_to_arc_or_lines(p0, p1, p2, p3, scale, feed):
@@ -166,11 +166,11 @@ def _bezier_to_arc_or_lines(p0, p1, p2, p3, scale, feed):
 
     center = _circumcenter(sp, mid, ep)
     if center is None:
-        return [f'G1 X{ep[0]:.4f} Y{ep[1]:.4f} F{feed}']
+        return [(f'G1 X{{0:.4f}} Y{{1:.4f}} F{feed}', ep[0], ep[1])]
 
     radius = math.hypot(sp[0]-center[0], sp[1]-center[1])
     if radius < MIN_RADIUS:
-        return [f'G1 X{ep[0]:.4f} Y{ep[1]:.4f} F{feed}']
+        return [(f'G1 X{{0:.4f}} Y{{1:.4f}} F{feed}', ep[0], ep[1])]
 
     arc_mid_r = math.hypot(mid[0]-center[0], mid[1]-center[1])
     err = abs(arc_mid_r - radius)
@@ -191,7 +191,7 @@ def _bezier_to_arc_or_lines(p0, p1, p2, p3, scale, feed):
 
     cross = _cross2d(sp[0], sp[1], mid[0], mid[1], ep[0], ep[1])
     ccw = cross > 0
-    return [_arc_cmd(sp, ep, center, ccw, feed)]
+    return [(lambda ox, oy: _arc_cmd(sp, ep, center, ccw, feed, ox, oy), None, None)]
 
 
 def _quad_to_arc_or_lines(p0, cp, p3, scale, feed):
@@ -209,11 +209,11 @@ def _quad_to_arc_or_lines(p0, cp, p3, scale, feed):
 
     center = _circumcenter(sp, mid, ep)
     if center is None:
-        return [f'G1 X{ep[0]:.4f} Y{ep[1]:.4f} F{feed}']
+        return [(f'G1 X{{0:.4f}} Y{{1:.4f}} F{feed}', ep[0], ep[1])]
 
     radius = math.hypot(sp[0]-center[0], sp[1]-center[1])
     if radius < MIN_RADIUS:
-        return [f'G1 X{ep[0]:.4f} Y{ep[1]:.4f} F{feed}']
+        return [(f'G1 X{{0:.4f}} Y{{1:.4f}} F{feed}', ep[0], ep[1])]
 
     arc_mid_r = math.hypot(mid[0]-center[0], mid[1]-center[1])
     err = abs(arc_mid_r - radius)
@@ -236,7 +236,7 @@ def _quad_to_arc_or_lines(p0, cp, p3, scale, feed):
 
     cross = _cross2d(sp[0], sp[1], mid[0], mid[1], ep[0], ep[1])
     ccw = cross > 0
-    return [_arc_cmd(sp, ep, center, ccw, feed)]
+    return [(lambda ox, oy: _arc_cmd(sp, ep, center, ccw, feed, ox, oy), None, None)]
 
 
 # ── Main class ────────────────────────────────────────────────
@@ -270,6 +270,14 @@ class GCodeGenerator:
     def estimate_dimensions(self, text, text_height_mm):
         """Return (width_mm, height_mm) for placement/collision checks."""
         _, w, h = self._build_geometry(text, text_height_mm)
+        
+        # Expand bounds if bolding is enabled
+        bold_repeats = int(config.get('text_settings.bold_repeats', 1))
+        if bold_repeats > 1:
+            offset_mm = float(config.get('text_settings.bold_offset_mm', 0.15))
+            w += offset_mm * 2
+            h += offset_mm * 2
+            
         return w, h
 
     def text_to_gcode(self, text, x_start, y_start, text_height_mm, passes=1):
@@ -278,11 +286,17 @@ class GCodeGenerator:
         Clears Work Coordinate Offsets via G10 L2 P1 to ensure WPos=MPos.
         Returns (gcode_string, actual_width_mm, actual_height_mm).
         """
-        path, width, height = self._build_geometry(
-            text, text_height_mm, origin=(x_start, y_start))
-        s_on = self._s_value()
+        # 1. Fetch text config
+        flip_y = str(config.get('text_settings.mirror_y', 'false')).lower() == 'true'
+        bold_repeats = int(config.get('text_settings.bold_repeats', 1))
+        bold_offset = float(config.get('text_settings.bold_offset_mm', 0.15))
+        bold_pattern = config.get('text_settings.bold_pattern', 'cross')
 
-        # Read Z height from live config, supporting both height and depth naming for backwards compat
+        # 2. Build base path closures (lambda funcs that take x,y offsets)
+        path_closures, width, height = self._build_geometry(
+            text, text_height_mm, origin=(x_start, y_start), flip_y=flip_y)
+        
+        s_on = self._s_value()
         z_height = float(config.get('laser_settings.z_height_mm', config.get('laser_settings.z_depth_mm', 0.0)))
         use_z    = abs(z_height) > 1e-4
 
@@ -290,7 +304,7 @@ class GCodeGenerator:
             f'; Engrave: {text}',
             f'; Font={self.font_key}  Power={self.laser_power}%  S={s_on}/{self.spindle_max}  Feed={self.speed}',
             'G21',                  # mm mode
-            'G10 L2 P1 X0 Y0 Z0',   # CRITICAL: Clear Work Coordinate Offset so WPos matches MPos
+            'G10 L2 P1 X0 Y0 Z0',   # Clear Work Coordinate Offset so WPos matches MPos
             'G54',                  # Ensure we are using the G54 workspace we just cleared
             'G90',                  # Absolute positioning
         ]
@@ -308,10 +322,27 @@ class GCodeGenerator:
             gc.append(f'G0 Z{z_height:.4f}')   # Move up to the requested Z height
             gc.append('')
 
+        # 3. Generate bolding offsets
+        offsets = [(0, 0)]
+        if bold_repeats > 1:
+            if bold_pattern == 'cross':
+                offsets.extend([
+                    (bold_offset, 0), (-bold_offset, 0),
+                    (0, bold_offset), (0, -bold_offset)
+                ][:bold_repeats-1])
+            else: # circle
+                for i in range(1, bold_repeats):
+                    angle = (i / (bold_repeats - 1)) * math.pi * 2
+                    offsets.append((math.cos(angle)*bold_offset, math.sin(angle)*bold_offset))
+
+        # 4. Generate the actual Gcode for each pass and each bold offset
         for p in range(passes):
             gc.append(f'; Pass {p+1}/{passes}')
-            for entry in path:
-                gc.append(entry)
+            for off_idx, (ox, oy) in enumerate(offsets):
+                if bold_repeats > 1:
+                    gc.append(f'; Bold stroke {off_idx+1}/{len(offsets)} offset=({ox:.2f},{oy:.2f})')
+                for closure in path_closures:
+                    gc.append(closure(ox, oy))
             gc.append('')
 
         gc.append('M5')   # laser off
@@ -321,15 +352,20 @@ class GCodeGenerator:
 
         gc += ['G0 X0 Y0', 'M2']
 
+        # Adjust final reported width/height for bolding
+        if bold_repeats > 1:
+            width += bold_offset * 2
+            height += bold_offset * 2
+
         return '\n'.join(gc), width, height
 
     # ── Geometry pipeline ─────────────────────────────────────
-    def _build_geometry(self, text, text_height_mm, origin=(0.0, 0.0)):
+    def _build_geometry(self, text, text_height_mm, origin=(0.0, 0.0), flip_y=False):
         if self.engine == 'ttf' and _FONTTOOLS_AVAILABLE and self.ttf_path:
-            return self._build_ttf_geometry(text, text_height_mm, origin)
-        return self._build_polyline_geometry(text, text_height_mm, origin)
+            return self._build_ttf_geometry(text, text_height_mm, origin, flip_y)
+        return self._build_polyline_geometry(text, text_height_mm, origin, flip_y)
 
-    def _build_ttf_geometry(self, text, text_height_mm, origin):
+    def _build_ttf_geometry(self, text, text_height_mm, origin, flip_y):
         try:
             if self._ttfont is None:
                 self._ttfont = _TTFont(self.ttf_path)
@@ -338,7 +374,7 @@ class GCodeGenerator:
                 self._units_per_em = self._ttfont['head'].unitsPerEm
         except Exception as e:
             debug_print(f'TTF load error: {e}, using builtin')
-            return self._build_polyline_geometry(text, text_height_mm, origin)
+            return self._build_polyline_geometry(text, text_height_mm, origin, flip_y)
 
         scale = text_height_mm / self._units_per_em
         ox, oy = origin
@@ -363,7 +399,7 @@ class GCodeGenerator:
             cmds_raw, advance_u = self._glyph_cache[glyph_name]
 
             glyph_cmds, gx, gy = _pen_to_gcode(
-                cmds_raw, scale, cursor_x_u, ox, oy, self.speed)
+                cmds_raw, scale, cursor_x_u, ox, oy, self.speed, flip_y)
             path.extend(glyph_cmds)
             all_x.extend(gx)
             all_y.extend(gy)
@@ -377,7 +413,7 @@ class GCodeGenerator:
         height = max(all_y) - min(all_y)
         return path, width, height
 
-    def _build_polyline_geometry(self, text, text_height_mm, origin):
+    def _build_polyline_geometry(self, text, text_height_mm, origin, flip_y):
         polylines = self._glyphs_for_text(text)
         if not polylines:
             return [], 0.0, 0.0
@@ -386,7 +422,12 @@ class GCodeGenerator:
         if b is None:
             return [], 0.0, 0.0
 
-        flipped = [[(x, -y) for (x, y) in poly] for poly in polylines]
+        # Optional vertical flip (default false now for standard CNC coordinates)
+        if flip_y:
+            flipped = [[(x, -y) for (x, y) in poly] for poly in polylines]
+        else:
+            flipped = polylines
+            
         b2 = _bounds(flipped)
         min_x, min_y, max_x, max_y = b2
         units_height = (max_y - min_y) or 1.0
@@ -415,10 +456,12 @@ class GCodeGenerator:
         for poly in scaled:
             if not poly:
                 continue
+            
             x0, y0 = poly[0]
-            path.append(f'G0 X{x0:.4f} Y{y0:.4f}')
+            # Fast bind values inside lambda using default args
+            path.append(lambda ox, oy, sx=x0, sy=y0: f'G0 X{sx+ox:.4f} Y{sy+oy:.4f}')
             for (x, y) in poly[1:]:
-                path.append(f'G1 X{x:.4f} Y{y:.4f} F{self.speed}')
+                path.append(lambda ox, oy, cx=x, cy=y, feed=self.speed: f'G1 X{cx+ox:.4f} Y{cy+oy:.4f} F{feed}')
 
         b3 = _bounds(scaled)
         if b3 is None:
@@ -487,9 +530,9 @@ class GCodeGenerator:
 
 # ── TTF pen-recording → G-code with G2/G3 arcs ───────────────
 
-def _pen_to_gcode(commands, scale, cursor_x_u, ox, oy, feed):
+def _pen_to_gcode(commands, scale, cursor_x_u, ox, oy, feed, flip_y):
     def tx(x):  return ox + (cursor_x_u + x) * scale
-    def ty(y):  return oy + (-y) * scale
+    def ty(y):  return oy + ((-y) if flip_y else y) * scale
 
     gcode  = []
     all_x  = []
@@ -498,13 +541,13 @@ def _pen_to_gcode(commands, scale, cursor_x_u, ox, oy, feed):
 
     def move_to(mx, my):
         nonlocal cur
-        gcode.append(f'G0 X{mx:.4f} Y{my:.4f}')
+        gcode.append(lambda ox, oy, cx=mx, cy=my: f'G0 X{cx+ox:.4f} Y{cy+oy:.4f}')
         all_x.append(mx);  all_y.append(my)
         cur = (mx, my)
 
     def line_to(mx, my):
         nonlocal cur
-        gcode.append(f'G1 X{mx:.4f} Y{my:.4f} F{feed}')
+        gcode.append(lambda ox, oy, cx=mx, cy=my: f'G1 X{cx+ox:.4f} Y{cy+oy:.4f} F{feed}')
         all_x.append(mx);  all_y.append(my)
         cur = (mx, my)
 
@@ -527,7 +570,12 @@ def _pen_to_gcode(commands, scale, cursor_x_u, ox, oy, feed):
 
             arc_cmds = _cubic_to_arc_or_lines_machine(mp0, mp1, mp2, mp3, feed)
             for ac in arc_cmds:
-                gcode.append(ac)
+                if isinstance(ac, tuple):
+                    # It's an arc command tuple: (func, _, _)
+                    gcode.append(ac[0])
+                else:
+                    # It's a line fallback string, wrap it
+                    gcode.append(lambda ox, oy, cmd=ac: cmd.format(ox, oy))
             all_x.append(mp3[0]);  all_y.append(mp3[1])
             cur = mp3
 
@@ -552,7 +600,10 @@ def _pen_to_gcode(commands, scale, cursor_x_u, ox, oy, feed):
             for (sp, qcp, ep) in segments:
                 arc_cmds = _quad_to_arc_or_lines_machine(sp, qcp, ep, feed)
                 for ac in arc_cmds:
-                    gcode.append(ac)
+                    if isinstance(ac, tuple):
+                        gcode.append(ac[0])
+                    else:
+                        gcode.append(lambda ox, oy, cmd=ac: cmd.format(ox, oy))
                 all_x.append(ep[0]);  all_y.append(ep[1])
                 cur = ep
 
@@ -573,11 +624,11 @@ def _cubic_to_arc_or_lines_machine(p0, p1, p2, p3, feed):
     mid = _bezier_midpoint(p0, p1, p2, p3)
     center = _circumcenter(p0, mid, p3)
     if center is None:
-        return [f'G1 X{p3[0]:.4f} Y{p3[1]:.4f} F{feed}']
+        return [(lambda ox, oy, ex=p3[0], ey=p3[1]: f'G1 X{ex+ox:.4f} Y{ey+oy:.4f} F{feed}', None, None)]
 
     radius = math.hypot(p0[0]-center[0], p0[1]-center[1])
     if radius < MIN_RADIUS:
-        return [f'G1 X{p3[0]:.4f} Y{p3[1]:.4f} F{feed}']
+        return [(lambda ox, oy, ex=p3[0], ey=p3[1]: f'G1 X{ex+ox:.4f} Y{ey+oy:.4f} F{feed}', None, None)]
 
     arc_mid_r = math.hypot(mid[0]-center[0], mid[1]-center[1])
     if abs(arc_mid_r - radius) > MAX_ARC_ERR:
@@ -592,7 +643,7 @@ def _cubic_to_arc_or_lines_machine(p0, p1, p2, p3, feed):
 
     cross = _cross2d(p0[0], p0[1], mid[0], mid[1], p3[0], p3[1])
     ccw = cross > 0
-    return [_arc_cmd(p0, p3, center, ccw, feed)]
+    return [(lambda ox, oy: _arc_cmd(p0, p3, center, ccw, feed, ox, oy), None, None)]
 
 
 def _quad_to_arc_or_lines_machine(p0, cp, p3, feed):
@@ -606,11 +657,11 @@ def _quad_to_arc_or_lines_machine(p0, cp, p3, feed):
     mid = _quad_midpoint(p0, cp, p3)
     center = _circumcenter(p0, mid, p3)
     if center is None:
-        return [f'G1 X{p3[0]:.4f} Y{p3[1]:.4f} F{feed}']
+        return [(lambda ox, oy, ex=p3[0], ey=p3[1]: f'G1 X{ex+ox:.4f} Y{ey+oy:.4f} F{feed}', None, None)]
 
     radius = math.hypot(p0[0]-center[0], p0[1]-center[1])
     if radius < MIN_RADIUS:
-        return [f'G1 X{p3[0]:.4f} Y{p3[1]:.4f} F{feed}']
+        return [(lambda ox, oy, ex=p3[0], ey=p3[1]: f'G1 X{ex+ox:.4f} Y{ey+oy:.4f} F{feed}', None, None)]
 
     arc_mid_r = math.hypot(mid[0]-center[0], mid[1]-center[1])
     if abs(arc_mid_r - radius) > MAX_ARC_ERR:
@@ -622,7 +673,7 @@ def _quad_to_arc_or_lines_machine(p0, cp, p3, feed):
 
     cross = _cross2d(p0[0], p0[1], mid[0], mid[1], p3[0], p3[1])
     ccw = cross > 0
-    return [_arc_cmd(p0, p3, center, ccw, feed)]
+    return [(lambda ox, oy: _arc_cmd(p0, p3, center, ccw, feed, ox, oy), None, None)]
 
 
 # ── Module-level helpers ──────────────────────────────────────
