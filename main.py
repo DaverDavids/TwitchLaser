@@ -82,22 +82,32 @@ def process_queue(laser, layout, gcode_gen, obs):
                 override_rect = job['settings'].get('override_rect') if job.get('settings') else None
                 
                 if override_rect:
-                    # User manually specified a box, map it directly
-                    x1 = min(override_rect['x1'], override_rect['x2'])
-                    y1 = min(override_rect['y1'], override_rect['y2'])
-                    manual_w = abs(override_rect['x2'] - override_rect['x1'])
-                    manual_h = abs(override_rect['y2'] - override_rect['y1'])
+                    # User manually specified coordinates
                     
-                    # Convert to local coordinates for the layout manager
+                    x1 = override_rect.get('x1')
+                    y1 = override_rect.get('y1')
+                    x2 = override_rect.get('x2')
+                    y2 = override_rect.get('y2')
+
+                    # Convert start point to local coordinates
                     x_local = x1 - layout.offset_x_mm
                     y_local = y1 - layout.offset_y_mm
                     
-                    # Estimate a max text height that fits in this manual box
-                    # We preserve the aspect ratio of the text inside the box
-                    scale_factor = min(manual_w / width, manual_h / height) if width > 0 and height > 0 else 1.0
-                    final_height = text_height * scale_factor
+                    if x2 is not None and y2 is not None:
+                        # Full bounding box provided, scale text to fit inside
+                        manual_w = abs(x2 - x1)
+                        manual_h = abs(y2 - y1)
+                        
+                        scale_factor = min(manual_w / width, manual_h / height) if width > 0 and height > 0 else 1.0
+                        final_height = text_height * scale_factor
+                        debug_print(f"Using manual bounding box override: {override_rect}")
+                    else:
+                        # Only start coordinates provided, use default text height
+                        final_height = text_height
+                        debug_print(f"Using manual start point override (natural dimensions): X={x1}, Y={y1}")
+                        
                     position = (x_local, y_local, final_height)
-                    debug_print(f"Using manual position override: {override_rect}")
+
                 else:
                     # Standard auto-placement
                     position = layout.find_empty_space(width, height, text_height)
