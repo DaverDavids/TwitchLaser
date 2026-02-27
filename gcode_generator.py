@@ -358,11 +358,15 @@ class GCodeGenerator:
         if b is None:
             return [], 0.0, 0.0
 
-        # Optional vertical flip (default false now for standard CNC coordinates)
+        # Hershey/builtin coordinates natively have +Y going DOWN (screen space).
+        # We need to invert them so they map to standard CNC Cartesian (+Y UP).
+        # We do this mapping ALWAYS so that TTF and Hershey share the exact same
+        # physical mapping. If flip_y is toggled by user, it flips again.
+        flipped = [[(x, -y) for (x, y) in poly] for poly in polylines]
+        
+        # Apply the user toggle
         if flip_y:
-            flipped = [[(x, -y) for (x, y) in poly] for poly in polylines]
-        else:
-            flipped = polylines
+            flipped = [[(x, -y) for (x, y) in poly] for poly in flipped]
             
         b2 = _bounds(flipped)
         min_x, min_y, max_x, max_y = b2
