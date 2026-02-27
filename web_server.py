@@ -13,23 +13,23 @@ from gcode_generator import FONT_PROFILES
 
 app = Flask(__name__)
 
-laser = layout = gcode_gen = twitch = camera = engraving_queue = obs_ctrl = None
+laser = layout = gcode_gen = twitch = camera = job_mgr = obs_ctrl = None
 
-# NEW: Thread-safe engraving progress tracking
+# Thread-safe engraving progress tracking
 _engrave_lock = threading.Lock()
 _engrave_progress = {'active': False, 'current': 0, 'total': 0, 'text': ''}
 _engrave_stop_flag = False
 
 
 def init_web_server(laser_ctrl, layout_mgr, gcode_generator,
-                    twitch_mon, camera_stream, queue, obs_controller=None):
-    global laser, layout, gcode_gen, twitch, camera, engraving_queue, obs_ctrl
+                    twitch_mon, camera_stream, job_manager, obs_controller=None):
+    global laser, layout, gcode_gen, twitch, camera, job_mgr, obs_ctrl
     laser           = laser_ctrl
     layout          = layout_mgr
     gcode_gen       = gcode_generator
     twitch          = twitch_mon
     camera          = camera_stream
-    engraving_queue = queue
+    job_mgr         = job_manager
     obs_ctrl        = obs_controller
 
 
@@ -43,12 +43,13 @@ def index():
 @app.route('/api/status')
 def get_status():
     stats = layout.get_statistics() if layout else {}
+    pending_count = len([j for j in job_mgr.get_jobs() if j['status'] == 'pending']) if job_mgr else 0
     return jsonify({
         'laser_connected': laser.connected if laser else False,
         'twitch_running':  twitch.is_running() if twitch else False,
         'camera_running':  camera.is_running() if camera else False,
         'obs_connected':   obs_ctrl.is_connected() if obs_ctrl else False,
-        'queue_size':      len(engraving_queue) if engraving_queue is not None else 0,
+        'queue_size':      pending_count,
         'placements':      stats.get('total', 0),
         'coverage':        round(stats.get('coverage_percent', 0), 1),
         'config':          config.config,
@@ -79,7 +80,6 @@ def handle_config():
             gcode_gen.ttf_path = config.get('text_settings.ttf_path', gcode_gen.ttf_path)
             gcode_gen._ttfont  = None
 
-        # If OBS settings changed, reconnect
         if obs_ctrl and 'obs' in updates:
             obs_ctrl.reconnect()
 
@@ -159,111 +159,32 @@ def laser_reconnect():
                     'message': 'Reconnected' if ok else 'Reconnect failed'})
 
 
-# ── NEW: Engraving progress & stop endpoints ─────────────────
+# ── Engraving progress & stop endpoints ─────────────────
 @app.route('/api/engrave_progress')
 def engrave_progress():
-    """Return current engraving progress."""
     with _engrave_lock:
         return jsonify(_engrave_progress.copy())
 
 @app.route('/api/engrave_stop', methods=['POST'])
 def engrave_stop():
-    """Request immediate stop of active engraving."""
     global _engrave_stop_flag
     with _engrave_lock:
-        if not _engrave_progress['active']:
-            return jsonify({'success': False, 'message': 'No active engraving'})
         _engrave_stop_flag = True
     laser.stop()  # Send E-stop immediately
     return jsonify({'success': True, 'message': 'Stop requested'})
 
 
-# ── Engraving ─────────────────────────────────────────────────
+# ── Test Engraving ─────────────────────────────────────────────────
 @app.route('/api/test_engrave', methods=['POST'])
 def test_engrave():
-    global _engrave_stop_flag
     data = request.json or {}
     text = data.get('text', '').strip()
     if not text:
         return jsonify({'success': False, 'message': 'No text provided'})
 
-    try:
-        text_height    = config.get('text_settings.initial_height_mm', 5.0)
-        laser_settings = config.get('laser_settings', {})
-        rect = data.get('rect')
-
-        # Reset stop flag and initialize progress
-        with _engrave_lock:
-            _engrave_stop_flag = False
-            _engrave_progress['active'] = True
-            _engrave_progress['current'] = 0
-            _engrave_progress['total'] = 0
-            _engrave_progress['text'] = text
-
-        def progress_cb(current, total):
-            """Progress callback for send_gcode."""
-            with _engrave_lock:
-                _engrave_progress['current'] = current
-                _engrave_progress['total'] = total
-
-        if rect:
-            x1 = float(rect['x1']); y1 = float(rect['y1'])
-            x2 = float(rect['x2']); y2 = float(rect['y2'])
-            x_machine = min(x1, x2); y_machine = min(y1, y2)
-            box_h     = abs(y2 - y1)
-            min_h     = config.get('text_settings.min_height_mm', 2.0)
-            final_h   = max(min(text_height, box_h * 0.85), min_h)
-            gcode, aw, ah = gcode_gen.text_to_gcode(
-                text, x_machine, y_machine, final_h,
-                passes=laser_settings.get('passes', 1))
-            if obs_ctrl: obs_ctrl.on_engrave_start(name=text)
-            success, message = laser.send_gcode(gcode.split('\n'), progress_callback=progress_cb)
-            if obs_ctrl: obs_ctrl.on_engrave_finish(name=text, success=success)
-            
-            with _engrave_lock:
-                _engrave_progress['active'] = False
-            
-            if success:
-                layout.add_placement(text,
-                    x_machine - layout.offset_x_mm,
-                    y_machine - layout.offset_y_mm, aw, ah, final_h)
-                return jsonify({'success': True,
-                    'message': f'Engraved "{text}" at ({x_machine:.1f},{y_machine:.1f})  {aw:.1f}x{ah:.1f} mm',
-                    'position': {'x': x_machine, 'y': y_machine},
-                    'size':     {'width': aw, 'height': ah}})
-            return jsonify({'success': False, 'message': message})
-        else:
-            width, height = gcode_gen.estimate_dimensions(text, text_height)
-            position = layout.find_empty_space(width, height, text_height)
-            if not position:
-                with _engrave_lock:
-                    _engrave_progress['active'] = False
-                return jsonify({'success': False, 'message': 'No space available on board'})
-            x_local, y_local, final_h = position
-            x_machine = x_local + layout.offset_x_mm
-            y_machine = y_local + layout.offset_y_mm
-            gcode, aw, ah = gcode_gen.text_to_gcode(
-                text, x_machine, y_machine, final_h,
-                passes=laser_settings.get('passes', 1))
-            if obs_ctrl: obs_ctrl.on_engrave_start(name=text)
-            success, message = laser.send_gcode(gcode.split('\n'), progress_callback=progress_cb)
-            if obs_ctrl: obs_ctrl.on_engrave_finish(name=text, success=success)
-            
-            with _engrave_lock:
-                _engrave_progress['active'] = False
-            
-            if success:
-                layout.add_placement(text, x_local, y_local, aw, ah, final_h)
-                return jsonify({'success': True,
-                    'message': f'Engraved "{text}" machine=({x_machine:.1f},{y_machine:.1f})  {aw:.1f}x{ah:.1f} mm',
-                    'position': {'x': x_machine, 'y': y_machine},
-                    'size':     {'width': aw, 'height': ah}})
-            return jsonify({'success': False, 'message': message})
-
-    except Exception as e:
-        with _engrave_lock:
-            _engrave_progress['active'] = False
-        return jsonify({'success': False, 'message': str(e)})
+    # Route it directly into the queue system rather than blocking the web worker
+    job_mgr.add_job(text, source='Web UI Test')
+    return jsonify({'success': True, 'message': 'Added to queue'})
 
 
 # ── Manual placement ──────────────────────────────────────────
@@ -328,7 +249,7 @@ def restart_service():
         return jsonify({'success': False, 'message': str(e)})
 
 
-# ── Twitch / Queue ────────────────────────────────────────────
+# ── Twitch / Queue / Jobs ────────────────────────────────────────────
 @app.route('/api/twitch_toggle', methods=['POST'])
 def toggle_twitch():
     if twitch.is_running():
@@ -343,9 +264,39 @@ def twitch_reconnect():
     return jsonify({'success': ok, 'running': twitch.is_running(),
                     'message': 'Reconnecting…' if ok else 'Reconnect failed'})
 
-@app.route('/api/queue')
-def get_queue():
-    return jsonify({'queue': list(engraving_queue)})
+@app.route('/api/jobs', methods=['GET'])
+def get_jobs():
+    return jsonify({'jobs': job_mgr.get_jobs()})
+
+@app.route('/api/jobs/<job_id>/action', methods=['POST'])
+def job_action(job_id):
+    action = (request.json or {}).get('action', '')
+    
+    if action == 'redo':
+        new_job = job_mgr.redo_job(job_id)
+        if new_job:
+            return jsonify({'success': True, 'message': 'Job re-added to queue', 'job': new_job})
+        return jsonify({'success': False, 'message': 'Job not found'})
+        
+    elif action == 'stop':
+        # Send E-stop to laser, marking it stopped is handled in process_queue
+        laser.stop()
+        return jsonify({'success': True, 'message': 'Stop requested'})
+        
+    return jsonify({'success': False, 'message': 'Unknown action'})
+
+@app.route('/api/jobs/<job_id>/gcode', methods=['GET'])
+def download_gcode(job_id):
+    path = job_mgr.get_gcode_path(job_id)
+    if path and os.path.exists(path):
+        with open(path, 'r') as f:
+            content = f.read()
+        return Response(
+            content,
+            mimetype="text/plain",
+            headers={"Content-disposition": f"attachment; filename=job_{job_id}.gcode"}
+        )
+    return "G-Code not found", 404
 
 
 # ── OBS ─────────────────────────────────────────────────────
@@ -359,10 +310,6 @@ def obs_reconnect():
 
 @app.route('/api/obs_test_action', methods=['POST'])
 def obs_test_action():
-    """
-    Test a single OBS action immediately.
-    Body: { event: 'start'|'finish' }  or  { action: {...} }
-    """
     if not obs_ctrl:
         return jsonify({'success': False, 'message': 'OBS not initialized'})
 
@@ -378,12 +325,10 @@ def obs_test_action():
     elif 'action' in data:
         ok, msg = obs_ctrl.test_action(data['action'], name='TestUser')
         return jsonify({'success': ok, 'message': msg})
-    else:
-        return jsonify({'success': False, 'message': 'Provide event or action'})
+    return jsonify({'success': False, 'message': 'Provide event or action'})
 
 @app.route('/api/obs_config', methods=['GET', 'POST'])
 def obs_config():
-    """Get or save OBS settings (host, port, password, actions)."""
     if request.method == 'POST':
         data = request.json or {}
         config.set('obs', data)
