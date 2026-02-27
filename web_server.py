@@ -182,8 +182,13 @@ def test_engrave():
     if not text:
         return jsonify({'success': False, 'message': 'No text provided'})
 
+    # If user provided a manual bounding box, pack it into the settings
+    settings = {}
+    if 'rect' in data:
+        settings['override_rect'] = data['rect']
+
     # Route it directly into the queue system rather than blocking the web worker
-    job_mgr.add_job(text, source='Web UI Test')
+    job_mgr.add_job(text, source='Web UI Test', settings=settings)
     return jsonify({'success': True, 'message': 'Added to queue'})
 
 
