@@ -185,7 +185,23 @@ def test_engrave():
     # If user provided a manual bounding box, pack it into the settings
     settings = {}
     if 'rect' in data:
-        settings['override_rect'] = data['rect']
+        rect_data = data['rect']
+        
+        # Check if they sent only x1/y1 by looking for x2/y2 being empty or none
+        if 'x2' not in rect_data or rect_data['x2'] == '' or rect_data['x2'] is None:
+            # Single coordinate mode
+            settings['override_rect'] = {
+                'x1': float(rect_data.get('x1', 0)),
+                'y1': float(rect_data.get('y1', 0))
+            }
+        else:
+            # Full rect mode
+            settings['override_rect'] = {
+                'x1': float(rect_data.get('x1', 0)),
+                'y1': float(rect_data.get('y1', 0)),
+                'x2': float(rect_data.get('x2', 0)),
+                'y2': float(rect_data.get('y2', 0))
+            }
 
     # Route it directly into the queue system rather than blocking the web worker
     job_mgr.add_job(text, source='Web UI Test', settings=settings)
