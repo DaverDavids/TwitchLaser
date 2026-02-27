@@ -141,8 +141,12 @@ def _quad_midpoint(p0, cp, p3):
 
 
 def _arc_cmd(start, end, center, ccw, feed, ox=0, oy=0):
-    # I and J are relative to the start point (which has already had ox/oy added during execution)
-    # So we don't need to add ox/oy to i and j!
+    # start, end, and center are already shifted by the origin mapping in the _build_ttf_geometry
+    # so we simply calculate the relative offset for the CNC controller (I, J) from the actual start point
+    # but the machine expects the END coordinates to reflect the final physical location (so we add ox, oy)
+    # The start coordinate is already the CNC's current location.
+    
+    # Calculate I, J (relative distance from start of arc to center)
     i = center[0] - start[0]
     j = center[1] - start[1]
     cmd = 'G3' if ccw else 'G2'
@@ -335,11 +339,16 @@ class GCodeGenerator:
         all_y_mm = []
 
         for cmds_raw, offset_u in raw_paths:
+            # We must pass NO offset to _pen_to_gcode so the generated closures can handle origin correctly
             glyph_cmds, gx, gy = _pen_to_gcode(
-                cmds_raw, scale, offset_u, ox, oy, min_y_u, self.speed, flip_y)
+                cmds_raw, scale, offset_u, 0.0, 0.0, min_y_u, self.speed, flip_y)
             path.extend(glyph_cmds)
             all_x_mm.extend(gx)
             all_y_mm.extend(gy)
+            
+        # The bounds calculated are now relative to 0,0, we must add the origin offsets back
+        all_x_mm = [x + ox for x in all_x_mm]
+        all_y_mm = [y + oy for y in all_y_mm]
 
         width  = max(all_x_mm) - min(all_x_mm) if all_x_mm else 0.0
         height = max(all_y_mm) - min(all_y_mm) if all_y_mm else 0.0
