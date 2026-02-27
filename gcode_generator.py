@@ -16,8 +16,8 @@ Arc output (TTF engine):
   Straight segments and degenerate curves fall back to G1.
 
 Z axis:
-  If laser_settings.z_depth_mm is non-zero, the generated G-code will
-  plunge to that Z depth before engraving begins and return to Z0 at the
+  If laser_settings.z_height_mm is non-zero, the generated G-code will
+  move to that Z height before engraving begins and return to Z0 at the
   end.  Set to 0.0 (default) to disable Z motion entirely.
 """
 
@@ -141,7 +141,6 @@ def _quad_midpoint(p0, cp, p3):
 
 
 def _arc_cmd(start, end, center, ccw, feed):
-    """FIXED: Add feed rate to arc commands"""
     i = center[0] - start[0]
     j = center[1] - start[1]
     cmd = 'G3' if ccw else 'G2'
@@ -276,28 +275,29 @@ class GCodeGenerator:
     def text_to_gcode(self, text, x_start, y_start, text_height_mm, passes=1):
         """
         Generate M4-mode G-code.
-        Uses G53 absolute machine coordinates so it ignores any persistent work offsets.
+        Clears Work Coordinate Offsets via G10 L2 P1 to ensure WPos=MPos.
         Returns (gcode_string, actual_width_mm, actual_height_mm).
         """
         path, width, height = self._build_geometry(
             text, text_height_mm, origin=(x_start, y_start))
         s_on = self._s_value()
 
-        # Read Z depth from live config so it reflects UI changes without restart
-        z_depth = float(config.get('laser_settings.z_depth_mm', 0.0))
-        use_z   = abs(z_depth) > 1e-4
+        # Read Z height from live config, supporting both height and depth naming for backwards compat
+        z_height = float(config.get('laser_settings.z_height_mm', config.get('laser_settings.z_depth_mm', 0.0)))
+        use_z    = abs(z_height) > 1e-4
 
         gc = [
             f'; Engrave: {text}',
             f'; Font={self.font_key}  Power={self.laser_power}%  S={s_on}/{self.spindle_max}  Feed={self.speed}',
-            'G21',   # mm mode
-            'G90',   # absolute positioning
-            'G10 L20 P1 X0 Y0 Z0', # Clear the current work coordinate offsets just in case
+            'G21',                  # mm mode
+            'G10 L2 P1 X0 Y0 Z0',   # CRITICAL: Clear Work Coordinate Offset so WPos matches MPos
+            'G54',                  # Ensure we are using the G54 workspace we just cleared
+            'G90',                  # Absolute positioning
         ]
 
         if use_z:
-            gc.append(f'; Z depth: {z_depth:.3f} mm')
-            gc.append('G53 G0 Z0')          # ensure we start at absolute Z0 (bottom)
+            gc.append(f'; Z height: {z_height:.3f} mm')
+            gc.append('G0 Z0')      # Ensure we start at the bottom (0)
 
         gc += [
             f'M4 S{s_on}',
@@ -305,25 +305,21 @@ class GCodeGenerator:
         ]
 
         if use_z:
-            gc.append(f'G53 G0 Z{z_depth:.4f}')   # plunge to engraving depth in absolute machine coordinates
+            gc.append(f'G0 Z{z_height:.4f}')   # Move up to the requested Z height
             gc.append('')
 
         for p in range(passes):
             gc.append(f'; Pass {p+1}/{passes}')
             for entry in path:
-                # If path generation produced G0/G1/G2/G3, ensure it uses G53 for machine coordinates
-                if entry.startswith('G'):
-                    gc.append(f'G53 {entry}')
-                else:
-                    gc.append(entry)
+                gc.append(entry)
             gc.append('')
 
         gc.append('M5')   # laser off
 
         if use_z:
-            gc.append('G53 G0 Z0')          # retract to absolute safe height (bottom)
+            gc.append('G0 Z0')      # Return to the bottom safely
 
-        gc += ['G53 G0 X0 Y0', 'M2']
+        gc += ['G0 X0 Y0', 'M2']
 
         return '\n'.join(gc), width, height
 
