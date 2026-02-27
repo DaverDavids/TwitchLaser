@@ -339,16 +339,11 @@ class GCodeGenerator:
         all_y_mm = []
 
         for cmds_raw, offset_u in raw_paths:
-            # We must pass NO offset to _pen_to_gcode so the generated closures can handle origin correctly
             glyph_cmds, gx, gy = _pen_to_gcode(
-                cmds_raw, scale, offset_u, 0.0, 0.0, min_y_u, self.speed, flip_y)
+                cmds_raw, scale, offset_u, ox, oy, min_y_u, height_u, self.speed, flip_y)
             path.extend(glyph_cmds)
             all_x_mm.extend(gx)
             all_y_mm.extend(gy)
-            
-        # The bounds calculated are now relative to 0,0, we must add the origin offsets back
-        all_x_mm = [x + ox for x in all_x_mm]
-        all_y_mm = [y + oy for y in all_y_mm]
 
         width  = max(all_x_mm) - min(all_x_mm) if all_x_mm else 0.0
         height = max(all_y_mm) - min(all_y_mm) if all_y_mm else 0.0
@@ -471,17 +466,18 @@ class GCodeGenerator:
 
 # ── TTF pen-recording → G-code with G2/G3 arcs ───────────────
 
-def _pen_to_gcode(commands, scale, cursor_x_u, ox, oy, min_y_u, feed, flip_y):
+def _pen_to_gcode(commands, scale, cursor_x_u, ox, oy, min_y_u, height_u, feed, flip_y):
     # Map from font coordinates to final mm coords with offset
     # font coordinates normally have y=0 at baseline
     def tx(x):  return ox + (cursor_x_u + x) * scale
     
     def ty(y):  
-        # Shift the raw y so the lowest point is exactly at y=0, then scale
-        y_shifted = (y - min_y_u) * scale
+        # Shift the raw y so the lowest point is exactly at y=0
+        y_norm = y - min_y_u
         if flip_y:
-            return oy - y_shifted
-        return oy + y_shifted
+            # Mirror the Y coordinate WITHIN the bounding box
+            y_norm = height_u - y_norm
+        return oy + y_norm * scale
 
     gcode  = []
     all_x  = []
