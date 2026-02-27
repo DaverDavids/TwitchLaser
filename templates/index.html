@@ -24,7 +24,6 @@
         .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; max-width: 1400px; margin: 0 auto; }
         .full-width { grid-column: 1 / -1; }
         
-        /* For standard 3-column layouts, making something span 2 columns without being full screen */
         @media (min-width: 768px) {
             .span-2 { grid-column: span 2; }
         }
@@ -64,7 +63,6 @@
 
         #log { font-family: monospace; font-size: 0.78rem; color: #adadb8; background: #0e0e10; border: 1px solid #2d2d35; border-radius: 6px; padding: 10px; max-height: 160px; overflow-y: auto; line-height: 1.6; }
 
-        #queue-list { font-size: 0.82rem; color: #adadb8; line-height: 2; }
         .save-ok { color: #00c853; font-size: 0.8rem; margin-left: 8px; display: none; }
 
         .danger-zone { border: 1px solid #7f1d1d; border-radius: 8px; padding: 14px; margin-top: 10px; }
@@ -79,6 +77,24 @@
 
         .obs-action-group { background: #111; border: 1px solid #2d2d35; border-radius: 6px; padding: 12px; margin-top: 10px; }
         .obs-action-group h4 { font-size: 0.78rem; color: #adadb8; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+        /* QUEUE AND HISTORY STYLES */
+        #queue-list { font-size: 0.82rem; color: #adadb8; max-height: 400px; overflow-y: auto; padding-right: 10px; }
+        .queue-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #2d2d35; transition: background 0.15s; }
+        .queue-item:hover { background: #1f1f23; }
+        .queue-item:last-child { border-bottom: none; }
+        .queue-item.finished { opacity: 0.6; }
+        .queue-item.active { background: rgba(145,71,255,0.1); border-radius: 4px; padding: 8px; border-left: 3px solid #9147ff; }
+        .queue-item.failed, .queue-item.stopped { border-left: 3px solid #b91c1c; padding-left: 8px; opacity: 0.8; }
+        .queue-icon { margin-right: 10px; cursor: help; font-size: 1.1rem; }
+        .queue-details { flex-grow: 1; }
+        .queue-actions { display: flex; gap: 6px; }
+        .queue-actions button { padding: 4px 8px; font-size: 0.8rem; display: flex; align-items: center; justify-content: center; }
+        
+        .job-settings-tooltip { position: relative; display: inline-block; cursor: help; border-bottom: 1px dotted #adadb8; margin-left: 8px; font-size: 0.75rem; }
+        .job-settings-tooltip .tooltiptext { visibility: hidden; width: 220px; background-color: #1a1a1a; color: #fff; text-align: left; border-radius: 6px; padding: 8px; position: absolute; z-index: 100; bottom: 125%; left: 50%; margin-left: -110px; opacity: 0; transition: opacity 0.3s; border: 1px solid #3a3a43; font-size: 0.75rem; white-space: pre-wrap; line-height: 1.4; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        .job-settings-tooltip:hover .tooltiptext { visibility: visible; opacity: 1; }
+        .job-settings-tooltip .tooltiptext::after { content: ""; position: absolute; top: 100%; left: 50%; margin-left: -5px; border-width: 5px; border-style: solid; border-color: #3a3a43 transparent transparent transparent; }
     </style>
 </head>
 <body>
@@ -93,7 +109,7 @@
         <div class="status-item"><span class="dot" id="dot-obs"></span> OBS</div>
         
         <div class="stat-group">
-            <div class="status-item">Queue: <span class="badge" id="stat-queue">0</span></div>
+            <div class="status-item">Pending: <span class="badge" id="stat-queue">0</span></div>
             <div class="status-item">Names: <span class="badge" id="stat-names">0</span></div>
             <div class="status-item">Coverage: <span class="badge" id="stat-coverage">0%</span></div>
         </div>
@@ -135,7 +151,7 @@
             <div><label>Y2</label><input type="number" id="te-y2" placeholder="auto" step="0.1"></div>
         </div>
         <div class="btn-row" style="margin-top:10px;">
-            <button class="success" onclick="testEngrave()">&#9654; Engrave Now</button>
+            <button class="success" onclick="testEngrave()">&#9654; Queue Test</button>
         </div>
         <div id="engrave-result" style="margin-top:8px; font-size:0.8rem; color:#adadb8;"></div>
     </div>
@@ -157,6 +173,12 @@
             <button onclick="addManualPlacement()">&#43; Add to Database</button>
         </div>
         <div id="mp-result" style="margin-top:8px; font-size:0.8rem; color:#adadb8;"></div>
+    </div>
+
+    <!-- QUEUE / HISTORY -->
+    <div class="card span-2">
+        <h3>Engraving Queue & History</h3>
+        <div id="queue-list">Loading queue...</div>
     </div>
 
     <!-- TEXT / FONT SETTINGS -->
@@ -306,11 +328,8 @@
         </div>
     </div>
 
-    <!-- QUEUE & SYSTEM -->
+    <!-- SYSTEM CONTROLS -->
     <div class="card">
-        <h3>Engraving Queue <span class="badge" id="queue-badge">0</span></h3>
-        <div id="queue-list" style="margin-bottom: 20px;">Queue is empty</div>
-        
         <h3>&#9888;&#65039; System Controls</h3>
         <div class="danger-zone">
             <div class="btn-row">
@@ -460,8 +479,7 @@ async function testEngrave() {
     var r  = await api('/api/test_engrave', 'POST', body);
     var el = document.getElementById('engrave-result');
     el.textContent = r.message; el.style.color = r.success ? '#00c853' : '#e91916';
-    log('Engrave "'+text+'": '+r.message, r.success?'#00c853':'#e91916');
-    if (r.success) drawVisualizer();
+    log('Test engrave "'+text+'" queued', r.success?'#00c853':'#e91916');
 }
 
 // MANUAL PLACEMENT
@@ -589,17 +607,84 @@ async function restartService() {
     setTimeout(function(){location.reload();},8000);
 }
 
-// QUEUE
+// QUEUE / HISTORY
+var _lastQueueJson = '';
 async function updateQueue() {
-    var d=await api('/api/queue');
-    var el=document.getElementById('queue-list'), bk=document.getElementById('queue-badge');
-    if(d.queue&&d.queue.length>0){
-        bk.textContent=d.queue.length;
-        el.innerHTML=d.queue.map(function(j,i){
-            return '<div>'+(i+1)+'. <strong>'+j.name+'</strong> <span style="color:#adadb8;font-size:0.75rem">('+j.source+')</span></div>';
-        }).join('');
-    } else { bk.textContent='0'; el.textContent='Queue is empty'; }
+    try {
+        var d = await api('/api/jobs');
+        var jsonStr = JSON.stringify(d.jobs);
+        if (jsonStr === _lastQueueJson) return; // Only re-render if data actually changed
+        _lastQueueJson = jsonStr;
+
+        var el = document.getElementById('queue-list');
+        if (d.jobs && d.jobs.length > 0) {
+            el.innerHTML = d.jobs.map(function(j) {
+                var statusColor = '#adadb8';
+                var statusIcon = '&#8987;'; // hourglass
+                if (j.status === 'active') { statusColor = '#9147ff'; statusIcon = '&#9889;'; } // lightning
+                else if (j.status === 'finished') { statusColor = '#00c853'; statusIcon = '&#10004;'; } // check
+                else if (j.status === 'failed' || j.status === 'stopped') { statusColor = '#e91916'; statusIcon = '&#10060;'; } // X
+                
+                var timeStr = new Date(j.timestamp).toLocaleString();
+                
+                var actionBtns = '';
+                if (j.status === 'active' || j.status === 'pending') {
+                    actionBtns += `<button class="danger" onclick="jobAction('${j.id}', 'stop')" title="Stop Engraving">&#9209;</button>`; // stop square
+                } else {
+                    actionBtns += `<button class="secondary" onclick="jobAction('${j.id}', 'redo')" title="Redo Engrave with exact same settings">&#128259;</button>`; // refresh/redo
+                }
+                
+                if (j.gcode_file) {
+                    actionBtns += `<button class="secondary" onclick="downloadGcode('${j.id}')" title="Download G-Code">&#11015;</button>`; // down arrow
+                }
+                
+                var settingsHtml = '';
+                if (j.settings && Object.keys(j.settings).length > 0) {
+                    var sText = `Font: ${j.settings.font}\\nSize: ${j.settings.width}x${j.settings.height} mm\\nPosition: (${j.settings.x_machine}, ${j.settings.y_machine})\\nPower: ${j.settings.power}%\\nSpeed: ${j.settings.speed} mm/m`;
+                    if (j.settings.bold_repeats > 1) {
+                         sText += `\\nBold: ${j.settings.bold_repeats}x (${j.settings.bold_offset_mm}mm)`;
+                    }
+                    settingsHtml = `
+                        <div class="job-settings-tooltip">&#9881;
+                            <span class="tooltiptext">${sText}</span>
+                        </div>
+                    `;
+                }
+                
+                var errText = j.error ? `<div style="color:#e91916; font-size:0.75rem; margin-top:4px;">${j.error}</div>` : '';
+                
+                return `
+                <div class="queue-item ${j.status}">
+                    <div class="queue-icon" title="${timeStr}">${statusIcon}</div>
+                    <div class="queue-details">
+                        <strong style="color:${statusColor}">${j.name}</strong> 
+                        <span style="color:#6b6b78;font-size:0.75rem">(${j.source})</span>
+                        ${settingsHtml}
+                        ${errText}
+                    </div>
+                    <div class="queue-actions">
+                        ${actionBtns}
+                    </div>
+                </div>`;
+            }).join('');
+        } else { 
+            el.textContent = 'Queue is empty'; 
+        }
+    } catch(e) {}
 }
+
+async function jobAction(jobId, action) {
+    if (action === 'redo' && !confirm('Are you sure you want to redo this exact engrave? It will overlap if the board has not moved.')) return;
+    var r = await api('/api/jobs/' + jobId + '/action', 'POST', {action: action});
+    log('Job ' + action + ': ' + (r.message || 'Sent'), r.success ? '#00c853' : '#e91916');
+    _lastQueueJson = ''; // force a refresh
+    updateQueue();
+}
+
+function downloadGcode(jobId) {
+    window.open('/api/jobs/' + jobId + '/gcode', '_blank');
+}
+
 
 // VISUALIZER
 async function drawVisualizer(){var d=await api('/api/work_area');drawCanvas(d);}
@@ -672,7 +757,7 @@ window.addEventListener('DOMContentLoaded',async function(){
     await updateStatus();
     await updateQueue();
     setInterval(updateStatus,3000);
-    setInterval(updateQueue,4000);
+    setInterval(updateQueue,2000); // Updated to poll history more frequently, safe since JSON check prevents rewrite
     setInterval(drawVisualizer,12000);
 });
 </script>
