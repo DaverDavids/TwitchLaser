@@ -275,13 +275,9 @@ class GCodeGenerator:
 
     def text_to_gcode(self, text, x_start, y_start, text_height_mm, passes=1):
         """
-        Generate M4-mode G-code at machine coordinates.
+        Generate M4-mode G-code.
+        Uses G53 absolute machine coordinates so it ignores any persistent work offsets.
         Returns (gcode_string, actual_width_mm, actual_height_mm).
-
-        If laser_settings.z_depth_mm is non-zero the program will:
-          1. Rapid to Z0 (safe height) before positioning
-          2. Plunge to z_depth_mm after positioning over the start point
-          3. Return to Z0 after engraving completes
         """
         path, width, height = self._build_geometry(
             text, text_height_mm, origin=(x_start, y_start))
@@ -294,18 +290,14 @@ class GCodeGenerator:
         gc = [
             f'; Engrave: {text}',
             f'; Font={self.font_key}  Power={self.laser_power}%  S={s_on}/{self.spindle_max}  Feed={self.speed}',
+            'G21',   # mm mode
+            'G90',   # absolute positioning
+            'G10 L20 P1 X0 Y0 Z0', # Clear the current work coordinate offsets just in case
         ]
 
         if use_z:
             gc.append(f'; Z depth: {z_depth:.3f} mm')
-
-        gc += [
-            'G21',   # mm mode
-            'G90',   # absolute positioning
-        ]
-
-        if use_z:
-            gc.append('G0 Z0')          # ensure we start at Z0
+            gc.append('G53 G0 Z0')          # ensure we start at absolute Z0 (bottom)
 
         gc += [
             f'M4 S{s_on}',
@@ -313,21 +305,25 @@ class GCodeGenerator:
         ]
 
         if use_z:
-            gc.append(f'G0 Z{z_depth:.4f}')   # plunge to engraving depth
+            gc.append(f'G53 G0 Z{z_depth:.4f}')   # plunge to engraving depth in absolute machine coordinates
             gc.append('')
 
         for p in range(passes):
             gc.append(f'; Pass {p+1}/{passes}')
             for entry in path:
-                gc.append(entry)
+                # If path generation produced G0/G1/G2/G3, ensure it uses G53 for machine coordinates
+                if entry.startswith('G'):
+                    gc.append(f'G53 {entry}')
+                else:
+                    gc.append(entry)
             gc.append('')
 
         gc.append('M5')   # laser off
 
         if use_z:
-            gc.append('G0 Z0')          # retract to safe height
+            gc.append('G53 G0 Z0')          # retract to absolute safe height (bottom)
 
-        gc += ['G0 X0 Y0', 'M2']
+        gc += ['G53 G0 X0 Y0', 'M2']
 
         return '\n'.join(gc), width, height
 
