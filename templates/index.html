@@ -10,7 +10,8 @@
         
         /* HEADER AND STATUS */
         .header-container { max-width: 1400px; margin: 0 auto 20px auto; background: #18181b; border: 1px solid #2d2d35; border-radius: 10px; padding: 16px 20px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 15px; }
-        .header-title { font-size: 1.5rem; color: #9147ff; letter-spacing: 1px; font-weight: bold; margin: 0; }
+        .header-title { font-size: 1.5rem; color: #9147ff; letter-spacing: 1px; font-weight: bold; margin: 0; display: flex; align-items: baseline; gap: 10px; }
+        .version-badge { font-size: 0.8rem; color: #555560; font-weight: normal; font-family: monospace; }
         
         .status-row { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; }
         .status-item { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; }
@@ -130,7 +131,10 @@
 <body>
 
 <div class="header-container">
-    <h1 class="header-title">&#128308; TwitchLaser Control</h1>
+    <h1 class="header-title">
+        &#128308; TwitchLaser Control
+        <span class="version-badge">v115400</span>
+    </h1>
     
     <div class="status-row">
         <div class="status-item"><span class="dot" id="dot-laser"></span> Laser</div>
@@ -507,8 +511,15 @@ async function testEngrave() {
     var x1=document.getElementById('te-x1').value, y1=document.getElementById('te-y1').value,
         x2=document.getElementById('te-x2').value, y2=document.getElementById('te-y2').value;
     var body = {text: text};
-    if (x1!==''&&y1!==''&&x2!==''&&y2!=='')
-        body.rect = {x1:parseFloat(x1),y1:parseFloat(y1),x2:parseFloat(x2),y2:parseFloat(y2)};
+    
+    if (x1 !== '' && y1 !== '') {
+        body.rect = { x1: parseFloat(x1), y1: parseFloat(y1) };
+        if (x2 !== '' && y2 !== '') {
+            body.rect.x2 = parseFloat(x2);
+            body.rect.y2 = parseFloat(y2);
+        }
+    }
+        
     var r  = await api('/api/test_engrave', 'POST', body);
     var el = document.getElementById('engrave-result');
     el.textContent = r.message; el.style.color = r.success ? '#00c853' : '#e91916';
