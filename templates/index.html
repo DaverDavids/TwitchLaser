@@ -79,7 +79,8 @@
         .obs-action-group h4 { font-size: 0.78rem; color: #adadb8; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
 
         /* QUEUE AND HISTORY STYLES */
-        #queue-list { font-size: 0.82rem; color: #adadb8; max-height: 400px; overflow-y: auto; padding-right: 10px; }
+        #queue-container { max-height: 400px; overflow-y: auto; padding-right: 10px; }
+        #queue-list { font-size: 0.82rem; color: #adadb8; }
         .queue-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #2d2d35; transition: background 0.15s; }
         .queue-item:hover { background: #1f1f23; }
         .queue-item:last-child { border-bottom: none; }
@@ -92,9 +93,38 @@
         .queue-actions button { padding: 4px 8px; font-size: 0.8rem; display: flex; align-items: center; justify-content: center; }
         
         .job-settings-tooltip { position: relative; display: inline-block; cursor: help; border-bottom: 1px dotted #adadb8; margin-left: 8px; font-size: 0.75rem; }
-        .job-settings-tooltip .tooltiptext { visibility: hidden; width: 220px; background-color: #1a1a1a; color: #fff; text-align: left; border-radius: 6px; padding: 8px; position: absolute; z-index: 100; bottom: 125%; left: 50%; margin-left: -110px; opacity: 0; transition: opacity 0.3s; border: 1px solid #3a3a43; font-size: 0.75rem; white-space: pre-wrap; line-height: 1.4; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        .job-settings-tooltip .tooltiptext { 
+            visibility: hidden; 
+            width: 220px; 
+            background-color: #1a1a1a; 
+            color: #fff; 
+            text-align: left; 
+            border-radius: 6px; 
+            padding: 10px; 
+            position: absolute; 
+            z-index: 9999; 
+            top: 125%; /* Drop downward to prevent clipping */
+            left: 50%; 
+            margin-left: -110px; 
+            opacity: 0; 
+            transition: opacity 0.2s; 
+            border: 1px solid #9147ff; 
+            font-size: 0.75rem; 
+            white-space: pre-wrap; 
+            line-height: 1.5; 
+            box-shadow: 0 8px 16px rgba(0,0,0,0.8); 
+        }
         .job-settings-tooltip:hover .tooltiptext { visibility: visible; opacity: 1; }
-        .job-settings-tooltip .tooltiptext::after { content: ""; position: absolute; top: 100%; left: 50%; margin-left: -5px; border-width: 5px; border-style: solid; border-color: #3a3a43 transparent transparent transparent; }
+        .job-settings-tooltip .tooltiptext::after { 
+            content: ""; 
+            position: absolute; 
+            bottom: 100%; 
+            left: 50%; 
+            margin-left: -5px; 
+            border-width: 5px; 
+            border-style: solid; 
+            border-color: transparent transparent #9147ff transparent; 
+        }
     </style>
 </head>
 <body>
@@ -178,7 +208,10 @@
     <!-- QUEUE / HISTORY -->
     <div class="card span-2">
         <h3>Engraving Queue & History</h3>
-        <div id="queue-list">Loading queue...</div>
+        <!-- Added wrapper to handle scroll independently of the list content -->
+        <div id="queue-container">
+            <div id="queue-list">Loading queue...</div>
+        </div>
     </div>
 
     <!-- TEXT / FONT SETTINGS -->
