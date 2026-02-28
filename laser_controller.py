@@ -5,6 +5,8 @@ import socket
 import serial
 import time
 import threading
+import os
+from datetime import datetime
 from config import debug_print, config
 
 class LaserController:
@@ -16,7 +18,7 @@ class LaserController:
         self._line_buf = ''
         self._monitor_thread = None
         self._monitor_running = False
-        self._engraving = False  # NEW: flag to pause monitor during jobs
+        self._engraving = False  # flag to pause monitor during jobs
         self.connect()
         self._start_monitor()
 
@@ -92,7 +94,7 @@ class LaserController:
     def _monitor_loop(self):
         while self._monitor_running:
             time.sleep(5)
-            # FIXED: Don't ping or read during active engraving
+            # Don't ping or read during active engraving
             if self._engraving:
                 continue
             
@@ -210,15 +212,23 @@ class LaserController:
         if total == 0:
             return True, "No commands"
 
+        log_path = os.path.join(os.path.dirname(__file__), "gcode_stream.log")
+        try:
+            log_file = open(log_path, "a")
+            log_file.write(f"\n\n--- NEW STREAM START: {datetime.now()} ---\n")
+        except:
+            log_file = None
+
         debug_print(f"Sending {total} G-code commands...")
 
         with self.lock:
             if not self.connected:
                 if not self.reconnect():
+                    if log_file: log_file.write("ABORT: Not connected\n"); log_file.close()
                     return False, "Not connected to FluidNC"
 
             self._flush_input()
-            self._engraving = True  # FIXED: Signal monitor to pause
+            self._engraving = True
 
             try:
                 for i, cmd in enumerate(commands):
@@ -227,15 +237,31 @@ class LaserController:
                             self.connection.sendall((cmd + '\n').encode())
                         else:
                             self.connection.write((cmd + '\n').encode())
+                            
+                        if log_file:
+                            log_file.write(f"[{i+1}/{total}] SENT: {cmd}\n")
+                            log_file.flush()
+                            
                     except Exception as e:
-                        return False, f"Send error at line {i + 1}: {e}"
+                        err_msg = f"Send error at line {i + 1}: {e}"
+                        if log_file: log_file.write(f"ABORT: {err_msg}\n"); log_file.close()
+                        return False, err_msg
 
-                    # FIXED: Robust ok parsing - ignore echo/status lines
+                    # We increase timeout to 60s because M400 or long slow moves 
+                    # can cause GRBL to delay the 'ok' until the queue has space or empties.
                     while True:
-                        response = self._read_line(timeout=15.0)
+                        response = self._read_line(timeout=60.0)
                         if response is None:
-                            return False, f"Timeout at line {i + 1}"
+                            err_msg = f"Timeout waiting for response at line {i + 1} ({cmd})"
+                            debug_print(err_msg)
+                            if log_file: log_file.write(f"ABORT: {err_msg}\n"); log_file.close()
+                            return False, err_msg
+                            
                         lc = response.lower()
+                        
+                        if log_file and not lc.startswith('<'): # omit constant position pings from log
+                            log_file.write(f"  RECV: {response}\n")
+                            log_file.flush()
                         
                         # Skip non-response lines
                         if (lc.startswith('[echo:') or 
@@ -246,17 +272,26 @@ class LaserController:
                             
                         if lc == 'ok':
                             break
-                        elif lc.startswith('error'):
-                            debug_print(f"FluidNC error at line {i + 1}: {response}")
+                        elif lc.startswith('error') or lc.startswith('alarm'):
+                            err_msg = f"FluidNC {response} at line {i + 1} ({cmd})"
+                            debug_print(err_msg)
+                            if log_file: log_file.write(f"ERROR_DETECTED: {err_msg}\n")
+                            # We break to continue sending the rest, but you can see errors in the log now
                             break
 
                     if progress_callback:
                         progress_callback(i + 1, total)
 
                 debug_print(f"Successfully sent {total} commands")
+                if log_file: 
+                    log_file.write(f"--- STREAM COMPLETE ---\n")
+                    log_file.close()
                 return True, f"Completed {total} commands"
+                
             finally:
-                self._engraving = False  # FIXED: Re-enable monitor
+                self._engraving = False
+                if log_file and not log_file.closed:
+                    log_file.close()
 
     # ── Convenience commands ──────────────────────────────────
     def home(self):
