@@ -80,7 +80,7 @@ def _arc_cmd(start, end, center, ccw, feed):
     i = center[0] - start[0]
     j = center[1] - start[1]
     cmd = 'G3' if ccw else 'G2'
-    return f'{cmd} X{end[0]:.3f} Y{end[1]:.3f} I{i:.3f} J{j:.3f}' # arcs inherit active feed, don't append F here unless strictly needed by fluidnc
+    return f'{cmd} X{end[0]:.3f} Y{end[1]:.3f} I{i:.3f} J{j:.3f} F{feed}' 
 
 def _quad_to_arc_or_lines_machine(p0, cp, p3, feed):
     """
