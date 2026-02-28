@@ -239,7 +239,7 @@ class GCodeGenerator:
                     # Find first ON point
                     first_on = 0
                     for i in range(len(tags)):
-                        if tags[i] & FT_CURVE_TAG_ON:
+                        if tags[i] & 1:  # FT_CURVE_TAG_ON is bit 0
                             first_on = i
                             break
                     else:
@@ -258,17 +258,20 @@ class GCodeGenerator:
                         tag = tags[i]
                         pt = points[i]
                         
-                        if tag & FT_CURVE_TAG_ON:
+                        is_on = (tag & 1)
+                        is_cubic = (tag & 2)
+                        
+                        if is_on:
                             char_commands.append(('lineTo', pt))
                             i += 1
-                        elif tag & FT_CURVE_TAG_CONIC:
-                            # Quadratic curve
+                        elif not is_cubic:
+                            # Quadratic curve (CONIC)
                             cp = pt
                             i += 1
                             if i < len(points):
                                 next_tag = tags[i]
                                 next_pt = points[i]
-                                if next_tag & FT_CURVE_TAG_ON:
+                                if (next_tag & 1):
                                     char_commands.append(('qCurveTo', cp, next_pt))
                                     i += 1
                                 else:
@@ -279,8 +282,8 @@ class GCodeGenerator:
                             else:
                                 # Loops back to start
                                 char_commands.append(('qCurveTo', cp, points[0]))
-                        elif tag & FT_CURVE_TAG_CUBIC:
-                            # Cubic curve (requires 2 off-points, then 1 on-point)
+                        else:
+                            # Cubic curve
                             cp1 = pt
                             if i + 2 < len(points):
                                 cp2 = points[i+1]
@@ -323,7 +326,6 @@ class GCodeGenerator:
                     cp1 = (cmd[1][0] + cursor_x, cmd[1][1])
                     cp2 = (cmd[2][0] + cursor_x, cmd[2][1])
                     ep  = (cmd[3][0] + cursor_x, cmd[3][1])
-                    # (Skipping exhaustive bounds check on cp1/cp2 for brevity, they usually stay within limits)
                     if ep[1] > max_y: max_y = ep[1]
                     if ep[1] < min_y: min_y = ep[1]
                     commands.append((op, cp1, cp2, ep))
@@ -406,16 +408,12 @@ class GCodeGenerator:
 
         offsets = self._get_bold_offsets(bold_repeats, bold_offset_mm, bold_pattern)
 
-        # Helper to transform raw font point to machine coordinates
         def _tx(pt, bx, by):
-            # Scale
             mx = pt[0] * active_scale
-            # Flip Y or align bottom
             if mirror_y:
                 my = (box_h / final_scale - (pt[1] - min_y_raw)) * active_scale
             else:
                 my = (pt[1] - min_y_raw) * active_scale
-                
             return (mx + offset_x + bx, my + offset_y + by)
 
         gcode = [
