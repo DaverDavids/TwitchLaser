@@ -80,10 +80,13 @@ All settings are stored in `data/config.json` and can be edited via web interfac
 - Speed (mm/min)
 - Number of passes
 
-### Text Settings
+### Text Settings & Fonts
 - Initial text height (mm)
 - Minimum text height (mm)
 - Font style
+- Bolding / Retrace Options
+
+**To add custom fonts:** Drop any `.ttf` file into the `fonts/` directory in the project root. The web UI will automatically scan and add them to the font selection dropdown.
 
 ### Engraving Area
 - Width (mm) - default 200
@@ -129,6 +132,7 @@ twitchlaser/
 ├── obs_controller.py       # OBS WebSocket integration
 ├── camera_stream.py        # Webcam streaming
 ├── web_server.py           # Flask web interface
+├── fonts/                  # TrueType Font (.ttf) files
 ├── templates/
 │   └── index.html          # Web UI
 ├── static/
