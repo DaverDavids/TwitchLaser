@@ -142,7 +142,7 @@ class LaserController:
         except Exception:
             pass
 
-    def _read_line(self, max_wait_seconds=600.0):
+    def _read_line(self, max_wait_seconds=15.0):
         start = time.time()
         while time.time() - start < max_wait_seconds:
             # Check if we have a full line in buffer
@@ -232,9 +232,6 @@ class LaserController:
 
             try:
                 for i, cmd in enumerate(commands):
-                    # FluidNC will often consume M5, M400, M18 synchronously but occasionally NOT broadcast 'ok' back
-                    # if the buffer is entirely empty already, causing our script to deadlock waiting for it.
-                    # We send the command normally:
                     try:
                         if self.connection_type == 'network':
                             self.connection.sendall((cmd + '\n').encode())
@@ -252,8 +249,7 @@ class LaserController:
 
                     # Wait for OK
                     while True:
-                        # Wait max 600s
-                        response = self._read_line(max_wait_seconds=600.0)
+                        response = self._read_line(max_wait_seconds=15.0)
                         if response is None:
                             err_msg = f"Timeout waiting for response at line {i + 1} ({cmd})"
                             debug_print(err_msg)
