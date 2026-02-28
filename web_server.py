@@ -220,7 +220,8 @@ def focus_test():
         y1 = float(data['y1'])
         x2 = float(data['x2'])
         y2 = float(data['y2'])
-        z_dist = float(data['z_dist'])
+        start_z = float(data['start_z'])
+        end_z = float(data['end_z'])
         power = float(data['power'])
         speed = float(data['speed'])
         ticks = int(data.get('ticks', 5))
@@ -233,6 +234,7 @@ def focus_test():
     import math
     dx = x2 - x1
     dy = y2 - y1
+    z_dist = end_z - start_z
     length = math.hypot(dx, dy)
     
     if length < 1e-3:
@@ -255,7 +257,7 @@ def focus_test():
         'G10 L2 P1 X0 Y0 Z0',
         'G54',
         'G90',
-        'G0 Z0',
+        f'G0 Z{start_z:.4f}',
         f'G0 X{x1:.4f} Y{y1:.4f}',
         f'M4 S{s_val}'
     ]
@@ -264,9 +266,9 @@ def focus_test():
         fraction = i / float(ticks)
         cx = x1 + fraction * dx
         cy = y1 + fraction * dy
-        cz = fraction * z_dist
+        cz = start_z + fraction * z_dist
         
-        # Move forward on the line, increasing Z
+        # Move forward on the line, increasing/decreasing Z
         gc.append(f'G1 X{cx:.4f} Y{cy:.4f} Z{cz:.4f} F{speed:.1f}')
         
         # Tick mark (maintain Z)
