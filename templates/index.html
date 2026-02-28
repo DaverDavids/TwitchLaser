@@ -133,7 +133,7 @@
 <div class="header-container">
     <h1 class="header-title">
         &#128308; TwitchLaser Control
-        <span class="version-badge">v203000</span>
+        <span class="version-badge">v204200</span>
     </h1>
     
     <div class="status-row">
@@ -191,38 +191,32 @@
     </div>
 
     <!-- LASER FOCUS TEST -->
-    <div class="card span-2">
+    <div class="card">
         <h3>Laser Focus Test</h3>
-        <p style="font-size:0.78rem; color:#adadb8; margin-bottom:8px;">Engraves a straight line while linearly adjusting the Z-axis, with perpendicular tick marks every 1/5th of the length to help identify the sharpest focus point.</p>
+        <p style="font-size:0.78rem; color:#adadb8; margin-bottom:8px;">Engraves a straight line while ramping Z-axis, with tick marks to identify sharpest focus.</p>
         
-        <div class="form-grid">
+        <div class="coord-row">
+            <div><label>Start X</label><input type="number" id="ft-x1" placeholder="10" step="0.1"></div>
+            <div><label>Start Y</label><input type="number" id="ft-y1" placeholder="10" step="0.1"></div>
+            <div><label>End X</label><input type="number" id="ft-x2" placeholder="100" step="0.1"></div>
+            <div><label>End Y</label><input type="number" id="ft-y2" placeholder="10" step="0.1"></div>
+        </div>
+        
+        <div class="form-grid" style="margin-top:10px;">
             <div>
-                <label>Start X (mm)</label>
-                <input type="number" id="ft-x1" placeholder="10" step="0.1">
+                <label>Start Z (mm)</label>
+                <input type="number" id="ft-start-z" value="0.0" step="0.1">
             </div>
             <div>
-                <label>Start Y (mm)</label>
-                <input type="number" id="ft-y1" placeholder="10" step="0.1">
+                <label>End Z (mm)</label>
+                <input type="number" id="ft-end-z" value="5.0" step="0.1">
             </div>
             <div>
-                <label>End X (mm)</label>
-                <input type="number" id="ft-x2" placeholder="100" step="0.1">
-            </div>
-            <div>
-                <label>End Y (mm)</label>
-                <input type="number" id="ft-y2" placeholder="10" step="0.1">
-            </div>
-            <div>
-                <label>Z Distance Change (mm)</label>
-                <input type="number" id="ft-z" placeholder="5.0" step="0.1">
-                <p class="hint">Positive moves Z up, negative moves Z down</p>
-            </div>
-            <div>
-                <label>Number of Tick Marks</label>
+                <label>Num Ticks</label>
                 <input type="number" id="ft-ticks" value="5" min="1" max="20" step="1">
             </div>
             <div>
-                <label>Speed (mm/min)</label>
+                <label>Speed (mm/m)</label>
                 <input type="number" id="ft-speed" value="600" step="10">
             </div>
             <div>
@@ -232,7 +226,7 @@
         </div>
         
         <div class="btn-row" style="margin-top:14px;">
-            <button class="warn" onclick="startFocusTest()">&#9888;&#65039; Start Focus Test (Sends directly to laser)</button>
+            <button class="warn" onclick="startFocusTest()">&#9888;&#65039; Start Focus Test</button>
         </div>
         <div id="focus-result" style="margin-top:8px; font-size:0.8rem; color:#adadb8;"></div>
     </div>
@@ -588,7 +582,8 @@ async function startFocusTest() {
         y1: document.getElementById('ft-y1').value,
         x2: document.getElementById('ft-x2').value,
         y2: document.getElementById('ft-y2').value,
-        z_dist: document.getElementById('ft-z').value,
+        start_z: document.getElementById('ft-start-z').value,
+        end_z: document.getElementById('ft-end-z').value,
         ticks: document.getElementById('ft-ticks').value,
         speed: document.getElementById('ft-speed').value,
         power: document.getElementById('ft-power').value
