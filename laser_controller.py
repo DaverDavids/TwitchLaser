@@ -249,7 +249,13 @@ class LaserController:
 
                     # Wait for OK
                     while True:
-                        response = self._read_line(max_wait_seconds=15.0)
+                        # G1 lines and synchronous commands like M5 can take a very 
+                        # long time to return 'ok' because FluidNC will not return ok 
+                        # until the physical movement finishes if the planner buffer is full.
+                        # We use a 1-hour timeout (3600s) specifically for the streaming loop 
+                        # to ensure long slow vectors don't falsely time out.
+                        response = self._read_line(max_wait_seconds=3600.0)
+                        
                         if response is None:
                             err_msg = f"Timeout waiting for response at line {i + 1} ({cmd})"
                             debug_print(err_msg)
