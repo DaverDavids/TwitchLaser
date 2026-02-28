@@ -133,7 +133,7 @@
 <div class="header-container">
     <h1 class="header-title">
         &#128308; TwitchLaser Control
-        <span class="version-badge">v115400</span>
+        <span class="version-badge">v203000</span>
     </h1>
     
     <div class="status-row">
@@ -188,6 +188,53 @@
             <button class="success" onclick="testEngrave()">&#9654; Queue Test</button>
         </div>
         <div id="engrave-result" style="margin-top:8px; font-size:0.8rem; color:#adadb8;"></div>
+    </div>
+
+    <!-- LASER FOCUS TEST -->
+    <div class="card span-2">
+        <h3>Laser Focus Test</h3>
+        <p style="font-size:0.78rem; color:#adadb8; margin-bottom:8px;">Engraves a straight line while linearly adjusting the Z-axis, with perpendicular tick marks every 1/5th of the length to help identify the sharpest focus point.</p>
+        
+        <div class="form-grid">
+            <div>
+                <label>Start X (mm)</label>
+                <input type="number" id="ft-x1" placeholder="10" step="0.1">
+            </div>
+            <div>
+                <label>Start Y (mm)</label>
+                <input type="number" id="ft-y1" placeholder="10" step="0.1">
+            </div>
+            <div>
+                <label>End X (mm)</label>
+                <input type="number" id="ft-x2" placeholder="100" step="0.1">
+            </div>
+            <div>
+                <label>End Y (mm)</label>
+                <input type="number" id="ft-y2" placeholder="10" step="0.1">
+            </div>
+            <div>
+                <label>Z Distance Change (mm)</label>
+                <input type="number" id="ft-z" placeholder="5.0" step="0.1">
+                <p class="hint">Positive moves Z up, negative moves Z down</p>
+            </div>
+            <div>
+                <label>Number of Tick Marks</label>
+                <input type="number" id="ft-ticks" value="5" min="1" max="20" step="1">
+            </div>
+            <div>
+                <label>Speed (mm/min)</label>
+                <input type="number" id="ft-speed" value="600" step="10">
+            </div>
+            <div>
+                <label>Power (%)</label>
+                <input type="number" id="ft-power" value="20" min="1" max="100" step="1">
+            </div>
+        </div>
+        
+        <div class="btn-row" style="margin-top:14px;">
+            <button class="warn" onclick="startFocusTest()">&#9888;&#65039; Start Focus Test (Sends directly to laser)</button>
+        </div>
+        <div id="focus-result" style="margin-top:8px; font-size:0.8rem; color:#adadb8;"></div>
     </div>
 
     <!-- MANUAL PLACEMENT -->
@@ -524,6 +571,43 @@ async function testEngrave() {
     var el = document.getElementById('engrave-result');
     el.textContent = r.message; el.style.color = r.success ? '#00c853' : '#e91916';
     log('Test engrave "'+text+'" queued', r.success?'#00c853':'#e91916');
+}
+
+// FOCUS TEST
+async function startFocusTest() {
+    if (!confirm('Warning: This will send G-Code immediately to the laser, moving from X1,Y1 to X2,Y2 and ramping the Z axis. Ensure the bed is clear. Proceed?')) {
+        return;
+    }
+    
+    var el = document.getElementById('focus-result');
+    el.textContent = 'Sending...';
+    el.style.color = '#ffa000';
+    
+    var body = {
+        x1: document.getElementById('ft-x1').value,
+        y1: document.getElementById('ft-y1').value,
+        x2: document.getElementById('ft-x2').value,
+        y2: document.getElementById('ft-y2').value,
+        z_dist: document.getElementById('ft-z').value,
+        ticks: document.getElementById('ft-ticks').value,
+        speed: document.getElementById('ft-speed').value,
+        power: document.getElementById('ft-power').value
+    };
+    
+    // Validate inputs
+    for (var key in body) {
+        if (body[key] === '') {
+            el.textContent = 'Error: All fields are required';
+            el.style.color = '#e91916';
+            return;
+        }
+        body[key] = parseFloat(body[key]);
+    }
+    
+    var r = await api('/api/focus_test', 'POST', body);
+    el.textContent = r.message; 
+    el.style.color = r.success ? '#00c853' : '#e91916';
+    log('Focus Test: ' + r.message, r.success ? '#00c853' : '#e91916');
 }
 
 // MANUAL PLACEMENT
