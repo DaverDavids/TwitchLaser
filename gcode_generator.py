@@ -192,9 +192,7 @@ class GCodeGenerator:
             "G21 ; Millimeters",
             "G90 ; Absolute positioning",
             "M5  ; Ensure laser is off",
-            # We don't use G0 Z0 here during generation; 
-            # Z is assumed to be set via Focus Test previously, 
-            # or managed manually by the user.
+            "G0 Z0 ; Move to work Z=0 (focal height) before XY movement",
         ]
 
         # 4. Path traversal
