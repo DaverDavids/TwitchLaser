@@ -45,8 +45,8 @@ class LaserController:
             host = secrets.FLUIDNC_HOST
             port = secrets.FLUIDNC_PORT
             self.connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            # Setting default timeout for general ops, read_line will override this
-            self.connection.settimeout(5)
+            # Short timeout on the socket itself so we can intercept connection drops easily
+            self.connection.settimeout(0.5) 
             self.connection.connect((host, port))
             self.connected = True
             debug_print(f"Connected to FluidNC at {host}:{port}")
@@ -58,7 +58,7 @@ class LaserController:
         try:
             port = config.get('serial_port', '/dev/ttyUSB0')
             baud = config.get('serial_baud', 115200)
-            self.connection = serial.Serial(port, baud, timeout=1)
+            self.connection = serial.Serial(port, baud, timeout=0.1)
             time.sleep(2)
             self.connected = True
             debug_print(f"Connected to FluidNC on {port}")
@@ -107,10 +107,6 @@ class LaserController:
                             self.connection.sendall(b'?\n')
                         else:
                             self.connection.write(b'?\n')
-                        self.connection.settimeout(2)
-                        data = self.connection.recv(64)
-                        if not data:
-                            raise ConnectionError("empty response")
                 except Exception:
                     debug_print("FluidNC ping failed — reconnecting...")
                     self.connected = False
@@ -140,51 +136,45 @@ class LaserController:
                             break
                     except socket.timeout:
                         break
+                self.connection.settimeout(0.5)
             else:
                 self.connection.reset_input_buffer()
         except Exception:
             pass
 
-    def _read_line(self, timeout=10.0):
+    def _read_line(self, max_wait_seconds=600.0):
         start = time.time()
-        partial = self._line_buf
-        while time.time() - start < timeout:
-            if '\n' in partial:
-                line, partial = partial.split('\n', 1)
-                self._line_buf = partial
-                stripped = line.strip()
-                if stripped:
-                    return stripped
+        while time.time() - start < max_wait_seconds:
+            # Check if we have a full line in buffer
+            if '\n' in self._line_buf:
+                line, self._line_buf = self._line_buf.split('\n', 1)
+                line = line.strip()
+                if line:
+                    return line
                 continue
                 
             try:
                 if self.connection_type == 'network':
-                    # Set a short socket timeout to allow us to periodically check total time elapsed
-                    self.connection.settimeout(1.0)
                     try:
-                        data = self.connection.recv(256)
+                        data = self.connection.recv(1024)
                         if data:
-                            partial += data.decode('utf-8', errors='ignore')
+                            self._line_buf += data.decode('utf-8', errors='ignore')
                         else:
-                            # A completely empty recv() on a blocking socket indicates the connection was closed.
                             debug_print("_read_line: Connection remotely closed.")
-                            self._line_buf = partial
                             return None
                     except socket.timeout:
-                        # This is completely normal if FluidNC is just thinking. We just loop and wait.
+                        # expected behavior if laser is just executing a move
                         continue
                 else:
                     if self.connection.in_waiting > 0:
                         data = self.connection.read(self.connection.in_waiting)
-                        partial += data.decode('utf-8', errors='ignore')
+                        self._line_buf += data.decode('utf-8', errors='ignore')
                     else:
                         time.sleep(0.01)
             except Exception as e:
                 debug_print(f"_read_line unexpected error: {e}")
-                self._line_buf = partial
                 return None
                 
-        self._line_buf = partial
         return None
 
     # ── Commands ──────────────────────────────────────────────
@@ -200,7 +190,7 @@ class LaserController:
                     self.connection.sendall(cmd.encode())
                 else:
                     self.connection.write(cmd.encode())
-                response = self._read_line(timeout=2.0) or ''
+                response = self._read_line(max_wait_seconds=2.0) or ''
                 debug_print(f"CMD: {command.strip()} -> {response[:80]}")
                 return True, response
             except Exception as e:
@@ -242,6 +232,9 @@ class LaserController:
 
             try:
                 for i, cmd in enumerate(commands):
+                    # FluidNC will often consume M5, M400, M18 synchronously but occasionally NOT broadcast 'ok' back
+                    # if the buffer is entirely empty already, causing our script to deadlock waiting for it.
+                    # We send the command normally:
                     try:
                         if self.connection_type == 'network':
                             self.connection.sendall((cmd + '\n').encode())
@@ -257,10 +250,10 @@ class LaserController:
                         if log_file: log_file.write(f"ABORT: {err_msg}\n"); log_file.close()
                         return False, err_msg
 
-                    # Increased timeout to 600s (10 min). Sometimes GRBL stalls the 'ok' 
-                    # response for an M5 or M400 until *all* prior slow moves complete.
+                    # Wait for OK
                     while True:
-                        response = self._read_line(timeout=600.0)
+                        # Wait max 600s
+                        response = self._read_line(max_wait_seconds=600.0)
                         if response is None:
                             err_msg = f"Timeout waiting for response at line {i + 1} ({cmd})"
                             debug_print(err_msg)
@@ -286,7 +279,6 @@ class LaserController:
                             err_msg = f"FluidNC {response} at line {i + 1} ({cmd})"
                             debug_print(err_msg)
                             if log_file: log_file.write(f"ERROR_DETECTED: {err_msg}\n")
-                            # We break to continue sending the rest, but you can see errors in the log now
                             break
 
                     if progress_callback:
