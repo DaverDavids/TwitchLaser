@@ -208,6 +208,90 @@ def test_engrave():
     return jsonify({'success': True, 'message': 'Added to queue'})
 
 
+# ── Focus Test ─────────────────────────────────────────────────────
+@app.route('/api/focus_test', methods=['POST'])
+def focus_test():
+    if not laser or not laser.connected:
+        return jsonify({'success': False, 'message': 'Laser not connected'})
+    
+    data = request.json or {}
+    try:
+        x1 = float(data['x1'])
+        y1 = float(data['y1'])
+        x2 = float(data['x2'])
+        y2 = float(data['y2'])
+        z_dist = float(data['z_dist'])
+        power = float(data['power'])
+        speed = float(data['speed'])
+        ticks = int(data.get('ticks', 5))
+    except (KeyError, ValueError) as e:
+        return jsonify({'success': False, 'message': f'Invalid parameters: {e}'})
+
+    spindle_max = float(config.get('laser_settings.spindle_max', 1000))
+    s_val = int((power / 100.0) * spindle_max)
+    
+    import math
+    dx = x2 - x1
+    dy = y2 - y1
+    length = math.hypot(dx, dy)
+    
+    if length < 1e-3:
+        return jsonify({'success': False, 'message': 'Start and end points are too close'})
+        
+    ux = dx / length
+    uy = dy / length
+    
+    # Perpendicular vector for tick marks
+    px = -uy
+    py = ux
+    tick_len = 3.0 # 3mm ticks
+    
+    if ticks < 1:
+        ticks = 1
+
+    gc = [
+        '; Focus Test',
+        'G21',
+        'G10 L2 P1 X0 Y0 Z0',
+        'G54',
+        'G90',
+        'G0 Z0',
+        f'G0 X{x1:.4f} Y{y1:.4f}',
+        f'M4 S{s_val}'
+    ]
+    
+    for i in range(1, ticks + 1):
+        fraction = i / float(ticks)
+        cx = x1 + fraction * dx
+        cy = y1 + fraction * dy
+        cz = fraction * z_dist
+        
+        # Move forward on the line, increasing Z
+        gc.append(f'G1 X{cx:.4f} Y{cy:.4f} Z{cz:.4f} F{speed:.1f}')
+        
+        # Tick mark (maintain Z)
+        if i < ticks:
+            tx = cx + px * tick_len
+            ty = cy + py * tick_len
+            gc.append(f'G1 X{tx:.4f} Y{ty:.4f} Z{cz:.4f} F{speed:.1f}')
+            gc.append(f'G1 X{cx:.4f} Y{cy:.4f} Z{cz:.4f} F{speed:.1f}')
+            
+    gc.extend([
+        'M5',
+        'G0 Z0',
+        'G0 X0 Y0',
+        'M2'
+    ])
+    
+    def run_it():
+        laser.send_gcode(gc)
+
+    # Dispatch to background thread so we don't block web worker
+    threading.Thread(target=run_it, daemon=True).start()
+    
+    return jsonify({'success': True, 'message': 'Focus test started'})
+
+
 # ── Manual placement ──────────────────────────────────────────
 @app.route('/api/add_placement', methods=['POST'])
 def add_placement():
