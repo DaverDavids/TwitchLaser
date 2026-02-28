@@ -290,8 +290,8 @@ def focus_test():
     gc.extend([
         'M5',           # Laser off
         'G90',          # Absolute pos
-        'G0 Z0',        # Lift Z away safely first 
-        'G0 X0 Y0',     # Return to X0 Y0
+        'G0 Z0',        # Lower Z safely first 
+        '$H',           # Return to X0 Y0
         '$MD',          # FluidNC specific: Disable Motors
     ])
     
