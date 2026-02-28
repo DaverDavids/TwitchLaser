@@ -244,9 +244,24 @@ def focus_test():
     uy = dy / length
     
     # Perpendicular vector for tick marks
+    # We want to make sure it draws ticks inside the work area.
+    # If the line goes strictly up (0,100), uy=1, ux=0
+    # px = -uy = -1. This would make it go into negative X (out of bounds).
+    # So we'll take the absolute value of the normal to ensure we go +X / +Y
     px = -uy
     py = ux
+    
     tick_len = 3.0 # 3mm ticks
+    
+    # If starting at X=0, and px is negative, it will hit a soft limit.
+    # We force the tick to point into the positive quadrant relative to the line.
+    if px < 0 and x1 < tick_len:
+        px = -px
+        py = -py
+        
+    if py < 0 and y1 < tick_len:
+        px = -px
+        py = -py
     
     if ticks < 1:
         ticks = 1
