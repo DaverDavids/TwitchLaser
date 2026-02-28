@@ -295,9 +295,10 @@ def focus_test():
             
     gc.extend([
         'M5',
-        'G4 P0.1', # Short dwell to ensure M5 executes before rapid move
-        'G0 Z0',
-        'G0 X0 Y0',
+        'G4 P0.5', # Wait half a second to guarantee laser is off
+        'G90',
+        'G0 Z0', # Back to Z0
+        'G0 X0 Y0', # Return home
         'M2'
     ])
     
