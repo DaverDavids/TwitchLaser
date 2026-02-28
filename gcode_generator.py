@@ -9,13 +9,32 @@ from freetype import Face
 
 from config import config, debug_print
 
-FONT_PROFILES = {
-    'simplex': ('Simplex (Single line)', 0.4, 'ttf'),
-    'times':   ('Times (Standard)', 0.5, 'ttf'),
-    'arial':   ('Arial (Sans-serif)', 0.5, 'ttf'),
-    'cursive': ('Cursive (Elegant)', 0.3, 'ttf'),
-    'impact':  ('Impact (Bold)', 0.6, 'ttf'),
-}
+
+def _scan_for_fonts(fonts_dir='fonts'):
+    """Scans the given directory for TTF files and builds a dictionary profile."""
+    profiles = {
+        'simplex': ('Simplex (Single line)', 0.4, 'ttf', 'fonts/simplex.ttf'),
+        'times':   ('Times (Standard)', 0.5, 'ttf', 'fonts/times.ttf'),
+        'arial':   ('Arial (Sans-serif)', 0.5, 'ttf', 'fonts/arial.ttf'),
+        'cursive': ('Cursive (Elegant)', 0.3, 'ttf', 'fonts/cursive.ttf'),
+        'impact':  ('Impact (Bold)', 0.6, 'ttf', 'fonts/impact.ttf'),
+    }
+    
+    if os.path.exists(fonts_dir):
+        for filename in os.listdir(fonts_dir):
+            if filename.lower().endswith('.ttf'):
+                key = filename[:-4].lower()
+                # Don't overwrite our default labeled ones if they exist
+                if key not in profiles:
+                    # e.g., 'comic_sans.ttf' -> key: 'comic_sans', label: 'Comic Sans'
+                    label = filename[:-4].replace('_', ' ').title()
+                    path = os.path.join(fonts_dir, filename)
+                    profiles[key] = (label, 0.5, 'ttf', path)
+                    
+    return profiles
+
+FONT_PROFILES = _scan_for_fonts()
+
 
 class GCodeGenerator:
     def __init__(self):
@@ -32,10 +51,20 @@ class GCodeGenerator:
         t = config.get('text_settings', {})
         self.font_key = t.get('font', 'arial')
 
-        profile = FONT_PROFILES.get(self.font_key, FONT_PROFILES['arial'])
+        # Re-scan in case user added fonts while running (though a restart is safer)
+        global FONT_PROFILES
+        FONT_PROFILES = _scan_for_fonts()
+
+        # Fallback to arial if the key isn't found
+        if self.font_key not in FONT_PROFILES:
+            self.font_key = 'arial'
+            
+        profile = FONT_PROFILES[self.font_key]
         self.line_width_mm = profile[1]
         self.engine        = profile[2]
-        self.ttf_path      = t.get('ttf_path', 'fonts/arial.ttf')
+        
+        # If the config specified an explicit path, use it, otherwise use the scanned path
+        self.ttf_path      = t.get('ttf_path', profile[3] if len(profile) > 3 else f'fonts/{self.font_key}.ttf')
 
         self._face = None
         self._glyph_cache = {}
