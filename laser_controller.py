@@ -45,6 +45,7 @@ class LaserController:
             host = secrets.FLUIDNC_HOST
             port = secrets.FLUIDNC_PORT
             self.connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            # Setting default timeout for general ops, read_line will override this
             self.connection.settimeout(5)
             self.connection.connect((host, port))
             self.connected = True
@@ -155,25 +156,34 @@ class LaserController:
                 if stripped:
                     return stripped
                 continue
+                
             try:
                 if self.connection_type == 'network':
-                    self.connection.settimeout(0.05)
+                    # Set a short socket timeout to allow us to periodically check total time elapsed
+                    self.connection.settimeout(1.0)
                     try:
                         data = self.connection.recv(256)
                         if data:
                             partial += data.decode('utf-8', errors='ignore')
+                        else:
+                            # A completely empty recv() on a blocking socket indicates the connection was closed.
+                            debug_print("_read_line: Connection remotely closed.")
+                            self._line_buf = partial
+                            return None
                     except socket.timeout:
-                        pass
+                        # This is completely normal if FluidNC is just thinking. We just loop and wait.
+                        continue
                 else:
                     if self.connection.in_waiting > 0:
                         data = self.connection.read(self.connection.in_waiting)
                         partial += data.decode('utf-8', errors='ignore')
                     else:
-                        time.sleep(0.005)
+                        time.sleep(0.01)
             except Exception as e:
-                debug_print(f"_read_line error: {e}")
+                debug_print(f"_read_line unexpected error: {e}")
                 self._line_buf = partial
                 return None
+                
         self._line_buf = partial
         return None
 
