@@ -5,10 +5,9 @@ Supports standard TTF vector fonts via freetype-py.
 
 import os
 import math
-from freetype import Face
+from freetype import Face, FT_CURVE_TAG_ON, FT_CURVE_TAG_CONIC, FT_CURVE_TAG_CUBIC
 
 from config import config, debug_print
-
 
 def _scan_for_fonts(fonts_dir='fonts'):
     """Scans the given directory for TTF files and builds a dictionary profile."""
@@ -26,7 +25,6 @@ def _scan_for_fonts(fonts_dir='fonts'):
                 key = filename[:-4].lower()
                 # Don't overwrite our default labeled ones if they exist
                 if key not in profiles:
-                    # e.g., 'comic_sans.ttf' -> key: 'comic_sans', label: 'Comic Sans'
                     label = filename[:-4].replace('_', ' ').title()
                     path = os.path.join(fonts_dir, filename)
                     profiles[key] = (label, 0.5, 'ttf', path)
@@ -34,6 +32,123 @@ def _scan_for_fonts(fonts_dir='fonts'):
     return profiles
 
 FONT_PROFILES = _scan_for_fonts()
+
+# ── Arc fitting helpers ───────────────────────────────────────
+def _circumcenter(p0, p1, p2):
+    """
+    Return the circumcenter (cx, cy) of the triangle formed by three points,
+    or None if the points are collinear (no unique circle exists).
+    """
+    ax, ay = p0
+    bx, by = p1
+    cx, cy = p2
+    d = 2.0 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by))
+    if abs(d) < 1e-10:
+        return None   # collinear
+    ux = ((ax*ax + ay*ay) * (by - cy) +
+          (bx*bx + by*by) * (cy - ay) +
+          (cx*cx + cy*cy) * (ay - by)) / d
+    uy = ((ax*ax + ay*ay) * (cx - bx) +
+          (bx*bx + by*by) * (ax - cx) +
+          (cx*cx + cy*cy) * (bx - ax)) / d
+    return ux, uy
+
+def _cross2d(ox, oy, ax, ay, bx, by):
+    """2-D cross product of vectors (o→a) and (o→b)."""
+    return (ax - ox) * (by - oy) - (ay - oy) * (bx - ox)
+
+def _bezier_midpoint(p0, p1, p2, p3):
+    """Midpoint of a cubic Bezier at t=0.5."""
+    t = 0.5
+    mt = 1.0 - t
+    x = mt**3*p0[0] + 3*mt**2*t*p1[0] + 3*mt*t**2*p2[0] + t**3*p3[0]
+    y = mt**3*p0[1] + 3*mt**2*t*p1[1] + 3*mt*t**2*p2[1] + t**3*p3[1]
+    return x, y
+
+def _quad_midpoint(p0, cp, p3):
+    """Midpoint of a quadratic Bezier at t=0.5."""
+    t = 0.5
+    mt = 1.0 - t
+    x = mt**2*p0[0] + 2*mt*t*cp[0] + t**2*p3[0]
+    y = mt**2*p0[1] + 2*mt*t*cp[1] + t**2*p3[1]
+    return x, y
+
+def _arc_cmd(start, end, center, ccw, feed):
+    """
+    Build a G2/G3 arc command string.
+    """
+    i = center[0] - start[0]
+    j = center[1] - start[1]
+    cmd = 'G3' if ccw else 'G2'
+    return f'{cmd} X{end[0]:.3f} Y{end[1]:.3f} I{i:.3f} J{j:.3f}' # arcs inherit active feed, don't append F here unless strictly needed by fluidnc
+
+def _quad_to_arc_or_lines_machine(p0, cp, p3, feed):
+    """
+    Fit a G2/G3 arc to a quadratic Bezier in machine coordinates.
+    """
+    MIN_RADIUS  = 0.05
+    MAX_ARC_ERR = 0.08
+
+    seg_len = math.hypot(p3[0]-p0[0], p3[1]-p0[1])
+    if seg_len < 1e-6:
+        return []
+
+    mid = _quad_midpoint(p0, cp, p3)
+    center = _circumcenter(p0, mid, p3)
+    if center is None:
+        return [f'G1 X{p3[0]:.3f} Y{p3[1]:.3f} F{feed}']
+
+    radius = math.hypot(p0[0]-center[0], p0[1]-center[1])
+    if radius < MIN_RADIUS:
+        return [f'G1 X{p3[0]:.3f} Y{p3[1]:.3f} F{feed}']
+
+    arc_mid_r = math.hypot(mid[0]-center[0], mid[1]-center[1])
+    if abs(arc_mid_r - radius) > MAX_ARC_ERR:
+        cp1 = ((p0[0]+cp[0])*0.5, (p0[1]+cp[1])*0.5)
+        cp2 = ((cp[0]+p3[0])*0.5, (cp[1]+p3[1])*0.5)
+        mid_pt = ((cp1[0]+cp2[0])*0.5, (cp1[1]+cp2[1])*0.5)
+        return (_quad_to_arc_or_lines_machine(p0, cp1, mid_pt, feed) +
+                _quad_to_arc_or_lines_machine(mid_pt, cp2, p3, feed))
+
+    cross = _cross2d(p0[0], p0[1], mid[0], mid[1], p3[0], p3[1])
+    ccw = cross > 0
+    return [_arc_cmd(p0, p3, center, ccw, feed)]
+
+def _cubic_to_arc_or_lines_machine(p0, p1, p2, p3, feed):
+    """
+    Fit a G2/G3 arc to a cubic Bezier given in machine coordinates.
+    """
+    MIN_RADIUS  = 0.05
+    MAX_ARC_ERR = 0.08
+
+    seg_len = math.hypot(p3[0]-p0[0], p3[1]-p0[1])
+    if seg_len < 1e-6:
+        return []
+
+    mid = _bezier_midpoint(p0, p1, p2, p3)
+    center = _circumcenter(p0, mid, p3)
+    if center is None:
+        return [f'G1 X{p3[0]:.3f} Y{p3[1]:.3f} F{feed}']
+
+    radius = math.hypot(p0[0]-center[0], p0[1]-center[1])
+    if radius < MIN_RADIUS:
+        return [f'G1 X{p3[0]:.3f} Y{p3[1]:.3f} F{feed}']
+
+    arc_mid_r = math.hypot(mid[0]-center[0], mid[1]-center[1])
+    if abs(arc_mid_r - radius) > MAX_ARC_ERR:
+        # Split with De Casteljau at t=0.5
+        q1 = ((p0[0]+p1[0])*0.5, (p0[1]+p1[1])*0.5)
+        r1 = ((p1[0]+p2[0])*0.5, (p1[1]+p2[1])*0.5)
+        r2 = ((p2[0]+p3[0])*0.5, (p2[1]+p3[1])*0.5)
+        q2 = ((q1[0]+r1[0])*0.5, (q1[1]+r1[1])*0.5)
+        r0 = ((r1[0]+r2[0])*0.5, (r1[1]+r2[1])*0.5)
+        mid_pt = ((q2[0]+r0[0])*0.5, (q2[1]+r0[1])*0.5)
+        return (_cubic_to_arc_or_lines_machine(p0, q1, q2, mid_pt, feed) +
+                _cubic_to_arc_or_lines_machine(mid_pt, r0, r2, p3, feed))
+
+    cross = _cross2d(p0[0], p0[1], mid[0], mid[1], p3[0], p3[1])
+    ccw = cross > 0
+    return [_arc_cmd(p0, p3, center, ccw, feed)]
 
 
 class GCodeGenerator:
@@ -43,33 +158,26 @@ class GCodeGenerator:
         self.laser_power = s.get('power_percent', 40.0)
         self.speed       = s.get('speed_mm_per_min', 800)
         self.spindle_max = s.get('spindle_max', 1000)
-        
-        # Check both modern and legacy keys from the web UI
         self.focal_height = s.get('z_height_mm', s.get('z_depth_mm', 0.0))
 
         # Text settings
         t = config.get('text_settings', {})
         self.font_key = t.get('font', 'arial')
 
-        # Re-scan in case user added fonts while running (though a restart is safer)
         global FONT_PROFILES
         FONT_PROFILES = _scan_for_fonts()
 
-        # Fallback to arial if the key isn't found
         if self.font_key not in FONT_PROFILES:
             self.font_key = 'arial'
             
         profile = FONT_PROFILES[self.font_key]
         self.line_width_mm = profile[1]
         self.engine        = profile[2]
-        
-        # If the config specified an explicit path, use it, otherwise use the scanned path
         self.ttf_path      = t.get('ttf_path', profile[3] if len(profile) > 3 else f'fonts/{self.font_key}.ttf')
 
         self._face = None
         self._glyph_cache = {}
 
-        # Coordinate offsets (for multi-pass or centering)
         self.offset_x = 0.0
         self.offset_y = 0.0
 
@@ -80,7 +188,6 @@ class GCodeGenerator:
                 self._face = Face(self.ttf_path)
             else:
                 debug_print(f"TTF font not found at {self.ttf_path}.")
-                # Attempt to load a default system font if arial isn't present
                 alt_paths = [
                     '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
                     '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
@@ -93,95 +200,143 @@ class GCodeGenerator:
                         debug_print(f"Loaded fallback font: {p}")
                         break
 
-    def _get_ttf_paths(self, text, height):
+    def _get_ttf_commands(self, text, height):
         """
-        Generate vector outlines from a TrueType Font using freetype-py.
-        Returns a list of polygons (lists of (x,y) tuples).
+        Extracts native Bezier commands from freetype-py outlines.
+        Returns unscaled, un-offset commands.
         """
         self._init_font()
         if not self._face:
             debug_print("ERROR: No valid TrueType font available to render text.")
-            return []
+            return [], 1.0, 0, 0
 
-        # Calculate a reasonable point size to sample
-        # We'll generate it large, then scale it down to exact `height` mm.
         self._face.set_char_size(48 * 64)
-
-        paths = []
+        
+        commands = []
         cursor_x = 0.0
-
-        scale_factor = 1.0
         max_y = -999999
         min_y = 999999
 
-        raw_glyphs = []
-
-        # 1. Extract raw unscaled glyph points
         for char in text:
             if char not in self._glyph_cache:
                 self._face.load_char(char)
                 slot = self._face.glyph
                 outline = slot.outline
                 
-                char_paths = []
+                # Decompose the FreeType outline into drawing commands
+                char_commands = []
+                
                 start = 0
                 for end in outline.contours:
-                    contour = []
-                    for i in range(start, end + 1):
-                        x = outline.points[i][0]
-                        y = outline.points[i][1]
-                        contour.append((x, y))
-                    # Close the contour
-                    if contour:
-                        contour.append(contour[0])
-                    char_paths.append(contour)
+                    # freetype outlines are stored as a flat list of points and tags
+                    points = outline.points[start:end+1]
+                    tags = outline.tags[start:end+1]
+                    
+                    if not points:
+                        start = end + 1
+                        continue
+                        
+                    # Find first ON point
+                    first_on = 0
+                    for i in range(len(tags)):
+                        if tags[i] & FT_CURVE_TAG_ON:
+                            first_on = i
+                            break
+                    else:
+                        # No ON points at all (rare, usually a single quadratic). We skip for safety.
+                        start = end + 1
+                        continue
+                        
+                    # Rotate arrays so first element is ON
+                    points = points[first_on:] + points[:first_on]
+                    tags = tags[first_on:] + tags[:first_on]
+                    
+                    char_commands.append(('moveTo', points[0]))
+                    
+                    i = 1
+                    while i < len(points):
+                        tag = tags[i]
+                        pt = points[i]
+                        
+                        if tag & FT_CURVE_TAG_ON:
+                            char_commands.append(('lineTo', pt))
+                            i += 1
+                        elif tag & FT_CURVE_TAG_CONIC:
+                            # Quadratic curve
+                            cp = pt
+                            i += 1
+                            if i < len(points):
+                                next_tag = tags[i]
+                                next_pt = points[i]
+                                if next_tag & FT_CURVE_TAG_ON:
+                                    char_commands.append(('qCurveTo', cp, next_pt))
+                                    i += 1
+                                else:
+                                    # Two off-curve points implies an on-curve point halfway between them
+                                    mid_pt = ((cp[0] + next_pt[0]) / 2.0, (cp[1] + next_pt[1]) / 2.0)
+                                    char_commands.append(('qCurveTo', cp, mid_pt))
+                                    # Do not increment i, next_pt becomes the cp for the next curve
+                            else:
+                                # Loops back to start
+                                char_commands.append(('qCurveTo', cp, points[0]))
+                        elif tag & FT_CURVE_TAG_CUBIC:
+                            # Cubic curve (requires 2 off-points, then 1 on-point)
+                            cp1 = pt
+                            if i + 2 < len(points):
+                                cp2 = points[i+1]
+                                end_pt = points[i+2]
+                                char_commands.append(('curveTo', cp1, cp2, end_pt))
+                                i += 3
+                            else:
+                                # Incomplete cubic at end of contour, loop to start
+                                cp2 = points[i+1] if i + 1 < len(points) else points[0]
+                                char_commands.append(('curveTo', cp1, cp2, points[0]))
+                                break
+                    
+                    # Close path
+                    char_commands.append(('lineTo', points[0]))
                     start = end + 1
 
                 advance = slot.advance.x
-                self._glyph_cache[char] = (char_paths, advance)
+                self._glyph_cache[char] = (char_commands, advance)
+
+            char_commands, advance = self._glyph_cache[char]
             
-            char_paths, advance = self._glyph_cache[char]
-            raw_glyphs.append((char_paths, cursor_x))
+            # Shift the raw commands by cursor_x, and track bounds
+            for cmd in char_commands:
+                op = cmd[0]
+                if op in ('moveTo', 'lineTo'):
+                    pt = cmd[1]
+                    shifted = (pt[0] + cursor_x, pt[1])
+                    if shifted[1] > max_y: max_y = shifted[1]
+                    if shifted[1] < min_y: min_y = shifted[1]
+                    commands.append((op, shifted))
+                elif op == 'qCurveTo':
+                    cp = (cmd[1][0] + cursor_x, cmd[1][1])
+                    ep = (cmd[2][0] + cursor_x, cmd[2][1])
+                    if cp[1] > max_y: max_y = cp[1]
+                    if cp[1] < min_y: min_y = cp[1]
+                    if ep[1] > max_y: max_y = ep[1]
+                    if ep[1] < min_y: min_y = ep[1]
+                    commands.append((op, cp, ep))
+                elif op == 'curveTo':
+                    cp1 = (cmd[1][0] + cursor_x, cmd[1][1])
+                    cp2 = (cmd[2][0] + cursor_x, cmd[2][1])
+                    ep  = (cmd[3][0] + cursor_x, cmd[3][1])
+                    # (Skipping exhaustive bounds check on cp1/cp2 for brevity, they usually stay within limits)
+                    if ep[1] > max_y: max_y = ep[1]
+                    if ep[1] < min_y: min_y = ep[1]
+                    commands.append((op, cp1, cp2, ep))
+                    
             cursor_x += advance
 
-            # Find vertical bounds of these raw paths to determine scaling
-            for contour in char_paths:
-                for px, py in contour:
-                    if py > max_y: max_y = py
-                    if py < min_y: min_y = py
-
-        # 2. Scale and shift to match the requested physical box height
         raw_height = max_y - min_y
         if raw_height < 1e-5:
-            return []
+            return [], 1.0, 0, 0
             
         scale = height / raw_height
-
-        for char_paths, cx in raw_glyphs:
-            for contour in char_paths:
-                scaled_contour = []
-                for px, py in contour:
-                    # Scale to mm
-                    sx = (px + cx) * scale
-                    # Align bottom to Y=0
-                    sy = (py - min_y) * scale
-                    scaled_contour.append((sx, sy))
-                paths.append(scaled_contour)
-
-        return paths
-
-    def _get_text_bounds(self, paths):
-        if not paths:
-            return 0, 0, 0, 0
-        min_x = min_y = 999999
-        max_x = max_y = -999999
-        for path in paths:
-            for x, y in path:
-                if x < min_x: min_x = x
-                if x > max_x: max_x = x
-                if y < min_y: min_y = y
-                if y > max_y: max_y = y
-        return min_x, min_y, max_x, max_y
+        
+        return commands, scale, min_y, cursor_x * scale
 
     def _get_bold_offsets(self, repeats, offset_mm, pattern):
         """Calculate offset vectors for bolding/repeating passes"""
@@ -190,12 +345,10 @@ class GCodeGenerator:
             return offsets
             
         if pattern == 'circle':
-            # Distribute points around a circle
             for i in range(1, repeats):
                 angle = (i - 1) * (2 * math.pi / (repeats - 1))
                 offsets.append((math.cos(angle) * offset_mm, math.sin(angle) * offset_mm))
         else:
-            # Cross/grid pattern
             cross_sequence = [
                 (1, 0), (0, 1), (-1, 0), (0, -1),
                 (1, 1), (-1, 1), (-1, -1), (1, -1)
@@ -212,7 +365,6 @@ class GCodeGenerator:
         """
         Generates standard FluidNC/GRBL compatible G-code for the text inside the bounding box.
         """
-        # Re-fetch settings right before generation in case they changed via web UI
         s = config.get('laser_settings', {})
         t = config.get('text_settings', {})
         
@@ -225,28 +377,25 @@ class GCodeGenerator:
         bold_repeats   = int(t.get('bold_repeats', 1))
         bold_offset_mm = float(t.get('bold_offset_mm', 0.15))
         bold_pattern   = t.get('bold_pattern', 'cross')
+        mirror_y       = t.get('mirror_y', False)
         
-        # Convert power % to spindle S-value
         s_val = int((self.laser_power / 100.0) * self.spindle_max)
 
-        # 1. Generate Raw Paths
-        raw_paths = self._get_ttf_paths(text, box_h)
+        # 1. Extract vector geometry
+        raw_commands, scale, min_y_raw, raw_w_scaled = self._get_ttf_commands(text, box_h)
 
-        if not raw_paths:
+        if not raw_commands:
             return "; Error: No paths generated"
 
         # 2. Scale and Justify into the target Bounding Box
-        min_x, min_y, max_x, max_y = self._get_text_bounds(raw_paths)
-        raw_w = max_x - min_x
-        raw_h = max_y - min_y
+        final_scale = 1.0
+        if raw_w_scaled > box_w:
+            final_scale = box_w / raw_w_scaled
+            
+        active_scale = scale * final_scale
 
-        scale = 1.0
-        if raw_w > box_w:
-            scale = box_w / raw_w  # Shrink to fit width
-
-        # Center within the box
-        final_w = raw_w * scale
-        final_h = raw_h * scale
+        final_w = raw_w_scaled * final_scale
+        final_h = box_h * final_scale
         
         offset_x = box_x + (box_w - final_w) / 2.0
         offset_y = box_y + (box_h - final_h) / 2.0
@@ -255,10 +404,20 @@ class GCodeGenerator:
         offset_x += self.offset_x
         offset_y += self.offset_y
 
-        # Calculate bold offsets
         offsets = self._get_bold_offsets(bold_repeats, bold_offset_mm, bold_pattern)
 
-        # 3. Build G-code Header
+        # Helper to transform raw font point to machine coordinates
+        def _tx(pt, bx, by):
+            # Scale
+            mx = pt[0] * active_scale
+            # Flip Y or align bottom
+            if mirror_y:
+                my = (box_h / final_scale - (pt[1] - min_y_raw)) * active_scale
+            else:
+                my = (pt[1] - min_y_raw) * active_scale
+                
+            return (mx + offset_x + bx, my + offset_y + by)
+
         gcode = [
             f"; TwitchLaser Engrave: '{text}'",
             "; Engine: " + self.engine,
@@ -270,40 +429,54 @@ class GCodeGenerator:
             f"G0 Z{self.focal_height:.4f} ; Move to physical focus height before XY movement",
         ]
 
-        # 4. Path traversal (with repeats and passes)
+        # 4. G-Code generation loop
         for p in range(passes):
             for b_idx, (bx, by) in enumerate(offsets):
                 if passes > 1 or bold_repeats > 1:
                     gcode.append(f"; --- Pass {p+1}/{passes} | Bold Offset {b_idx+1}/{bold_repeats} (dX:{bx:.3f} dY:{by:.3f}) ---")
+                
+                current_pos = None
+                
+                for cmd in raw_commands:
+                    op = cmd[0]
                     
-                for path in raw_paths:
-                    if not path:
-                        continue
+                    if op == 'moveTo':
+                        mpt = _tx(cmd[1], bx, by)
+                        gcode.append(f"G0 X{mpt[0]:.3f} Y{mpt[1]:.3f}")
+                        gcode.append(f"M4 S{s_val}") # Dynamic laser mode activates
+                        current_pos = mpt
                         
-                    # Move to start of path (Laser OFF)
-                    start_x = (path[0][0] * scale) + offset_x + bx
-                    start_y = (path[0][1] * scale) + offset_y + by
-                    
-                    # FluidNC Dynamic Laser Mode: M4
-                    gcode.append(f"G0 X{start_x:.3f} Y{start_y:.3f}")
-                    gcode.append(f"M4 S{s_val}")
+                    elif op == 'lineTo':
+                        mpt = _tx(cmd[1], bx, by)
+                        gcode.append(f"G1 X{mpt[0]:.3f} Y{mpt[1]:.3f} F{self.speed}")
+                        current_pos = mpt
+                        
+                    elif op == 'qCurveTo':
+                        mcp = _tx(cmd[1], bx, by)
+                        mep = _tx(cmd[2], bx, by)
+                        if current_pos:
+                            arc_lines = _quad_to_arc_or_lines_machine(current_pos, mcp, mep, self.speed)
+                            gcode.extend(arc_lines)
+                        current_pos = mep
+                        
+                    elif op == 'curveTo':
+                        mcp1 = _tx(cmd[1], bx, by)
+                        mcp2 = _tx(cmd[2], bx, by)
+                        mep  = _tx(cmd[3], bx, by)
+                        if current_pos:
+                            arc_lines = _cubic_to_arc_or_lines_machine(current_pos, mcp1, mcp2, mep, self.speed)
+                            gcode.extend(arc_lines)
+                        current_pos = mep
 
-                    # Trace path (Laser ON)
-                    for i in range(1, len(path)):
-                        px = (path[i][0] * scale) + offset_x + bx
-                        py = (path[i][1] * scale) + offset_y + by
-                        gcode.append(f"G1 X{px:.3f} Y{py:.3f} F{self.speed}")
+                # Turn off laser at end of bold/pass
+                gcode.append("M5")
 
-                    # Laser OFF at end of path
-                    gcode.append("M5")
-
-        # 5. Footer
         gcode.extend([
             "; Job Complete",
-            "G90",         # Absolute pos
-            "G0 Z0",       # Move Z out of the way safely first
-            "$H",          # Hardware Home (return to X0 Y0 safely via firmware)
-            "$MD",         # FluidNC specific: Disable Motors to stop whining
+            "G90",         
+            "G0 Z0",       
+            "$H",          
+            "$MD",         
         ])
 
         return "\n".join(gcode)
