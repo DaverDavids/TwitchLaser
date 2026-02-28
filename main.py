@@ -77,11 +77,9 @@ def process_queue(laser, layout, gcode_gen, obs):
                 laser_settings = config.get('laser_settings', {})
 
                 # Estimate dimensions
-                # Since we pulled out vtext which had native width estimators, 
-                # we just do a quick dry-run generate to get exact mm sizes
-                test_paths = gcode_gen._get_ttf_paths(name, text_height)
-                min_x, min_y, max_x, max_y = gcode_gen._get_text_bounds(test_paths)
-                width = (max_x - min_x) if max_x > min_x else 0
+                # We do a quick dry-run generate of the raw commands to get exact mm width
+                _, _, _, raw_width = gcode_gen._get_ttf_commands(name, text_height)
+                width = raw_width
                 height = text_height
                 
                 # Check if UI sent manual coordinate overrides
