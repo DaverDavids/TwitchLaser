@@ -24,6 +24,9 @@ class GCodeGenerator:
         self.laser_power = s.get('power_percent', 40.0)
         self.speed       = s.get('speed_mm_per_min', 800)
         self.spindle_max = s.get('spindle_max', 1000)
+        
+        # Pull focal height directly from the config
+        self.focal_height = s.get('focal_height_mm', 0.0)
 
         # Text settings
         t = config.get('text_settings', {})
@@ -158,6 +161,10 @@ class GCodeGenerator:
         # Convert power % to spindle S-value
         s_val = int((self.laser_power / 100.0) * self.spindle_max)
 
+        # Re-fetch focal height right before generation in case it changed via web UI
+        s = config.get('laser_settings', {})
+        self.focal_height = s.get('focal_height_mm', 0.0)
+
         # 1. Generate Raw Paths
         raw_paths = self._get_ttf_paths(text, box_h)
 
@@ -192,7 +199,7 @@ class GCodeGenerator:
             "G21 ; Millimeters",
             "G90 ; Absolute positioning",
             "M5  ; Ensure laser is off",
-            "G0 Z0 ; Move to work Z=0 (focal height) before XY movement",
+            f"G0 Z{self.focal_height:.4f} ; Move to physical focus height before XY movement",
         ]
 
         # 4. Path traversal
