@@ -10,6 +10,8 @@ Automatically engrave Twitch subscriber names on your laser engraver!
 - 🔥 **Automatic Engraving** - Queues and engraves subscriber names
 - 🗺️ **Smart Placement** - Tracks used space and finds optimal locations
 - 📹 **Live Streaming** - USB webcam support for streaming the engraving
+- 🎬 **OBS Studio Integration** - Controls scenes, sources, and hotkeys via WebSocket
+- 📋 **Job Management** - Robust queueing system ensures no events are lost
 - 🌐 **Web Interface** - Full control panel accessible via browser
 - ⚙️ **FluidNC Integration** - Direct control of BACHIN-3C-TA4 laser engraver
 - 💾 **Persistent Storage** - Remembers all placements and settings
@@ -32,6 +34,7 @@ Automatically engrave Twitch subscriber names on your laser engraver!
 - OpenCV
 - Twitch API credentials
 - FluidNC firmware on laser controller
+- OBS WebSocket (`obsws-python` for OBS integration)
 
 ### Run Installation Script
 
@@ -86,6 +89,9 @@ All settings are stored in `data/config.json` and can be edited via web interfac
 - Width (mm) - default 200
 - Height (mm) - default 298
 
+### OBS Integration
+Configurable via config settings. Allows automatic scene switching, text overlay updates (e.g., "Now Engraving: {name}"), and source toggling when an engraving job starts and finishes.
+
 ## Usage
 
 ### Automatic Mode
@@ -113,23 +119,25 @@ The built-in camera feed can be used with OBS:
 ```
 twitchlaser/
 ├── main.py                 # Main application
-├── config.py              # Configuration management
-├── secrets.py             # Credentials (create from .example)
-├── laser_controller.py    # FluidNC communication
-├── layout_manager.py      # Placement tracking
-├── gcode_generator.py     # Text to G-code conversion
-├── twitch_monitor.py      # Twitch API integration
-├── camera_stream.py       # Webcam streaming
-├── web_server.py          # Flask web interface
+├── config.py               # Configuration management
+├── secrets.py              # Credentials (create from .example)
+├── laser_controller.py     # FluidNC communication
+├── layout_manager.py       # Placement tracking
+├── gcode_generator.py      # Text to G-code conversion
+├── twitch_monitor.py       # Twitch API integration
+├── job_manager.py          # Engraving queue management
+├── obs_controller.py       # OBS WebSocket integration
+├── camera_stream.py        # Webcam streaming
+├── web_server.py           # Flask web interface
 ├── templates/
-│   └── index.html         # Web UI
+│   └── index.html          # Web UI
 ├── static/
-│   ├── css/style.css      # Styles
-│   └── js/app.js          # Client-side JavaScript
+│   ├── css/style.css       # Styles
+│   └── js/app.js           # Client-side JavaScript
 ├── data/
-│   ├── config.json        # Settings
-│   └── placements.json    # Placement tracking
-└── requirements.txt       # Python dependencies
+│   ├── config.json         # Settings
+│   └── placements.json     # Placement tracking
+└── requirements.txt        # Python dependencies
 ```
 
 ## API Endpoints
