@@ -263,7 +263,8 @@ def focus_test():
     gc = [
         '; Focus Test',
         'G21',
-        'G10 L2 P1 X0 Y0 Z0',
+        # Only zero X and Y work coordinates so we don't mess up absolute Z height
+        'G10 L2 P1 X0 Y0',
         'G54',
         'G90',
         f'G0 Z{start_z:.4f}',
