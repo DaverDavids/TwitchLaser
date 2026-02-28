@@ -154,18 +154,48 @@ class GCodeGenerator:
                 if y > max_y: max_y = y
         return min_x, min_y, max_x, max_y
 
+    def _get_bold_offsets(self, repeats, offset_mm, pattern):
+        """Calculate offset vectors for bolding/repeating passes"""
+        offsets = [(0.0, 0.0)]
+        if repeats <= 1:
+            return offsets
+            
+        if pattern == 'circle':
+            # Distribute points around a circle
+            for i in range(1, repeats):
+                angle = (i - 1) * (2 * math.PI / (repeats - 1))
+                offsets.append((math.cos(angle) * offset_mm, math.sin(angle) * offset_mm))
+        else:
+            # Cross/grid pattern
+            cross_sequence = [
+                (1, 0), (0, 1), (-1, 0), (0, -1),
+                (1, 1), (-1, 1), (-1, -1), (1, -1)
+            ]
+            for i in range(1, repeats):
+                idx = (i - 1) % len(cross_sequence)
+                mult = 1 + ((i - 1) // len(cross_sequence))
+                dx, dy = cross_sequence[idx]
+                offsets.append((dx * offset_mm * mult, dy * offset_mm * mult))
+                
+        return offsets
+
     def generate(self, text, box_x, box_y, box_w, box_h, orientation='horizontal'):
         """
         Generates standard FluidNC/GRBL compatible G-code for the text inside the bounding box.
         """
         # Re-fetch settings right before generation in case they changed via web UI
         s = config.get('laser_settings', {})
+        t = config.get('text_settings', {})
+        
         self.laser_power  = s.get('power_percent', 40.0)
         self.speed        = s.get('speed_mm_per_min', 800)
         self.spindle_max  = s.get('spindle_max', 1000)
-        
-        # Pull correct key from UI/Config mapping
         self.focal_height = s.get('z_height_mm', s.get('z_depth_mm', 0.0))
+        
+        passes         = int(s.get('passes', 1))
+        bold_repeats   = int(t.get('bold_repeats', 1))
+        bold_offset_mm = float(t.get('bold_offset_mm', 0.15))
+        bold_pattern   = t.get('bold_pattern', 'cross')
         
         # Convert power % to spindle S-value
         s_val = int((self.laser_power / 100.0) * self.spindle_max)
@@ -196,40 +226,49 @@ class GCodeGenerator:
         offset_x += self.offset_x
         offset_y += self.offset_y
 
-        # 3. Build G-code
+        # Calculate bold offsets
+        offsets = self._get_bold_offsets(bold_repeats, bold_offset_mm, bold_pattern)
+
+        # 3. Build G-code Header
         gcode = [
             f"; TwitchLaser Engrave: '{text}'",
             "; Engine: " + self.engine,
             "; Bounding Box: X{:.1f} Y{:.1f} W{:.1f} H{:.1f}".format(box_x, box_y, box_w, box_h),
+            f"; Passes: {passes} | Bold Repeats: {bold_repeats}",
             "G21 ; Millimeters",
             "G90 ; Absolute positioning",
             "M5  ; Ensure laser is off",
             f"G0 Z{self.focal_height:.4f} ; Move to physical focus height before XY movement",
         ]
 
-        # 4. Path traversal
-        for path in raw_paths:
-            if not path:
-                continue
-                
-            # Move to start of path (Laser OFF)
-            start_x = (path[0][0] * scale) + offset_x
-            start_y = (path[0][1] * scale) + offset_y
-            
-            # FluidNC Dynamic Laser Mode: M4
-            # M4 only fires laser when accelerating/moving, preventing burns on corners
-            gcode.append(f"G0 X{start_x:.3f} Y{start_y:.3f}")
-            gcode.append(f"M4 S{s_val}")
+        # 4. Path traversal (with repeats and passes)
+        for p in range(passes):
+            for b_idx, (bx, by) in enumerate(offsets):
+                if passes > 1 or bold_repeats > 1:
+                    gcode.append(f"; --- Pass {p+1}/{passes} | Bold Offset {b_idx+1}/{bold_repeats} (dX:{bx:.3f} dY:{by:.3f}) ---")
+                    
+                for path in raw_paths:
+                    if not path:
+                        continue
+                        
+                    # Move to start of path (Laser OFF)
+                    start_x = (path[0][0] * scale) + offset_x + bx
+                    start_y = (path[0][1] * scale) + offset_y + by
+                    
+                    # FluidNC Dynamic Laser Mode: M4
+                    gcode.append(f"G0 X{start_x:.3f} Y{start_y:.3f}")
+                    gcode.append(f"M4 S{s_val}")
 
-            # Trace path (Laser ON)
-            for i in range(1, len(path)):
-                px = (path[i][0] * scale) + offset_x
-                py = (path[i][1] * scale) + offset_y
-                gcode.append(f"G1 X{px:.3f} Y{py:.3f} F{self.speed}")
+                    # Trace path (Laser ON)
+                    for i in range(1, len(path)):
+                        px = (path[i][0] * scale) + offset_x + bx
+                        py = (path[i][1] * scale) + offset_y + by
+                        gcode.append(f"G1 X{px:.3f} Y{py:.3f} F{self.speed}")
 
-            # Laser OFF at end of path
-            gcode.append("M5")
+                    # Laser OFF at end of path
+                    gcode.append("M5")
 
+        # 5. Footer
         gcode.extend([
             "; Job Complete",
             "G90",         # Absolute pos
