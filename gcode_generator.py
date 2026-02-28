@@ -224,7 +224,7 @@ class GCodeGenerator:
             "; Job Complete",
             "G90",         # Absolute pos
             "G0 Z0",       # Move Z out of the way safely first
-            "G0 X0 Y0",    # Return home
+            "$H",          # Hardware Home (return to X0 Y0 safely via firmware)
             "$MD",         # FluidNC specific: Disable Motors to stop whining
         ])
 
