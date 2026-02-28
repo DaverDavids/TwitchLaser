@@ -1,19 +1,16 @@
 """
 GCode Generator - Converts text + layout rectangles into standard G-Code
-Supports standard TTF vector fonts or fallback Hershey fonts via vtext/vpype.
+Supports standard TTF vector fonts via freetype-py.
 """
 
 import os
 import math
 from freetype import TTFont
-import vtext
-import vpype
 
 from config import config, debug_print
 
-
 FONT_PROFILES = {
-    'simplex': ('Simplex (Single line)', 0.4, 'vtext'),
+    'simplex': ('Simplex (Single line)', 0.4, 'ttf'),
     'times':   ('Times (Standard)', 0.5, 'ttf'),
     'arial':   ('Arial (Sans-serif)', 0.5, 'ttf'),
     'cursive': ('Cursive (Elegant)', 0.3, 'ttf'),
@@ -30,9 +27,9 @@ class GCodeGenerator:
 
         # Text settings
         t = config.get('text_settings', {})
-        self.font_key = t.get('font', 'simplex')
+        self.font_key = t.get('font', 'arial')
 
-        profile = FONT_PROFILES.get(self.font_key, FONT_PROFILES['simplex'])
+        profile = FONT_PROFILES.get(self.font_key, FONT_PROFILES['arial'])
         self.line_width_mm = profile[1]
         self.engine        = profile[2]
         self.ttf_path      = t.get('ttf_path', 'fonts/arial.ttf')
@@ -45,57 +42,24 @@ class GCodeGenerator:
         self.offset_y = 0.0
 
     def _init_font(self):
-        """Lazy load TTF font if needed"""
-        if self.engine == 'ttf':
-            if not self._ttfont:
-                if os.path.exists(self.ttf_path):
-                    self._ttfont = TTFont(self.ttf_path)
-                else:
-                    debug_print(f"TTF font not found at {self.ttf_path}, falling back to vtext simplex.")
-                    self.engine = 'vtext'
-
-    def _get_vtext_paths(self, text, height):
-        """Generate vector paths using vtext (Hershey fonts)"""
-        try:
-            line = vtext.Line(text, font='simplex')
-            doc = vpype.Document()
-            doc.add(line.as_vpype(), 1)
-            # vtext produces paths around origin; need to scale to requested height
-            # We must compute bounds to scale it correctly
-            bounds = doc.bounds()
-            if not bounds:
-                return []
-            min_x, min_y, max_x, max_y = bounds
-            doc_height = max_y - min_y
-            if doc_height < 1e-5:
-                return []
-
-            scale = height / doc_height
-            doc.scale(scale, scale)
-
-            # Re-evaluate bounds after scaling
-            bounds = doc.bounds()
-            min_x, min_y, max_x, max_y = bounds
-
-            # Shift so bottom-left is at (0,0)
-            doc.translate(-min_x, -min_y)
-
-            # Invert Y so it draws bottom-to-top like a normal CNC (vtext/SVG is top-to-bottom)
-            # vpype coordinate system is +Y down. We want +Y up.
-            doc.scale(1, -1)
-            doc.translate(0, height)
-
-            paths = []
-            for layer in doc.layers.values():
-                for path in layer:
-                    pts = [(p.real, p.imag) for p in path]
-                    paths.append(pts)
-            return paths
-
-        except Exception as e:
-            debug_print(f"vtext generation error: {e}")
-            return []
-
+        """Lazy load TTF font"""
+        if not self._ttfont:
+            if os.path.exists(self.ttf_path):
+                self._ttfont = TTFont(self.ttf_path)
+            else:
+                debug_print(f"TTF font not found at {self.ttf_path}.")
+                # Attempt to load a default system font if arial isn't present
+                alt_paths = [
+                    '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+                    '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
+                    '/usr/share/fonts/truetype/freefont/FreeSans.ttf'
+                ]
+                for p in alt_paths:
+                    if os.path.exists(p):
+                        self._ttfont = TTFont(p)
+                        self.ttf_path = p
+                        debug_print(f"Loaded fallback font: {p}")
+                        break
 
     def _get_ttf_paths(self, text, height):
         """
@@ -104,7 +68,8 @@ class GCodeGenerator:
         """
         self._init_font()
         if not self._ttfont:
-            return self._get_vtext_paths(text, height)
+            debug_print("ERROR: No valid TrueType font available to render text.")
+            return []
 
         # Calculate a reasonable point size to sample
         # We'll generate it large, then scale it down to exact `height` mm.
@@ -173,49 +138,6 @@ class GCodeGenerator:
 
         return paths
 
-
-    def _calculate_hatch_fill(self, paths, bounding_box):
-        """
-        EXPERIMENTAL: Generates basic horizontal hatch lines to fill TTF outlines.
-        For a reliable fill in production, usually paths are rasterized or we use SVGs.
-        This provides a quick vector hack for filled text.
-        """
-        # (This is a simplified scanline fill algorithm for arbitrary polygons)
-        lines = []
-        min_x, min_y, max_x, max_y = bounding_box
-        
-        # Hatch density based on line width
-        step = max(0.1, self.line_width_mm * 0.8)
-        
-        y = min_y + step/2
-        while y < max_y:
-            intersections = []
-            
-            # Find all intersections of horizontal line `y` with all path segments
-            for path in paths:
-                for i in range(len(path)-1):
-                    p1 = path[i]
-                    p2 = path[i+1]
-                    
-                    # Check if line segment crosses horizontal line y
-                    if (p1[1] <= y < p2[1]) or (p2[1] <= y < p1[1]):
-                        # Calculate X intersection
-                        if p1[1] != p2[1]: # Avoid divide by zero
-                            x = p1[0] + (p2[0] - p1[0]) * (y - p1[1]) / (p2[1] - p1[1])
-                            intersections.append(x)
-                            
-            intersections.sort()
-            
-            # Pair up intersections (in, out, in, out)
-            for i in range(0, len(intersections)-1, 2):
-                x1 = intersections[i]
-                x2 = intersections[i+1]
-                lines.append([(x1, y), (x2, y)])
-                
-            y += step
-            
-        return lines
-
     def _get_text_bounds(self, paths):
         if not paths:
             return 0, 0, 0, 0
@@ -237,13 +159,7 @@ class GCodeGenerator:
         s_val = int((self.laser_power / 100.0) * self.spindle_max)
 
         # 1. Generate Raw Paths
-        if self.engine == 'ttf':
-            raw_paths = self._get_ttf_paths(text, box_h)
-            # If we want filled text, we could append hatch lines here
-            # hatch_lines = self._calculate_hatch_fill(raw_paths, self._get_text_bounds(raw_paths))
-            # raw_paths.extend(hatch_lines)
-        else:
-            raw_paths = self._get_vtext_paths(text, box_h)
+        raw_paths = self._get_ttf_paths(text, box_h)
 
         if not raw_paths:
             return "; Error: No paths generated"
