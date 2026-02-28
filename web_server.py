@@ -294,12 +294,13 @@ def focus_test():
             gc.append(f'G1 X{cx:.4f} Y{cy:.4f} Z{cz:.4f} F{speed:.1f}')
             
     gc.extend([
-        'M5',
-        'G4 P0.5', # Wait half a second to guarantee laser is off
-        'G90',
-        'G0 Z0', # Back to Z0
-        'G0 X0 Y0', # Return home
-        'M2'
+        'M5',           # Laser off
+        'M400',         # Wait for motions to finish
+        'G90',          # Make sure we're still in absolute pos
+        'G0 X0 Y0 Z0',  # Simultaneously return to origin and lower Z to 0
+        'M400',         # Wait for return to finish
+        'M18',          # Disable steppers until next command
+        'M2'            # End program
     ])
     
     def run_it():
