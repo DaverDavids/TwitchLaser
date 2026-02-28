@@ -247,10 +247,10 @@ class LaserController:
                         if log_file: log_file.write(f"ABORT: {err_msg}\n"); log_file.close()
                         return False, err_msg
 
-                    # We increase timeout to 60s because M400 or long slow moves 
-                    # can cause GRBL to delay the 'ok' until the queue has space or empties.
+                    # Increased timeout to 600s (10 min). Sometimes GRBL stalls the 'ok' 
+                    # response for an M5 or M400 until *all* prior slow moves complete.
                     while True:
-                        response = self._read_line(timeout=60.0)
+                        response = self._read_line(timeout=600.0)
                         if response is None:
                             err_msg = f"Timeout waiting for response at line {i + 1} ({cmd})"
                             debug_print(err_msg)
