@@ -244,17 +244,11 @@ def focus_test():
     uy = dy / length
     
     # Perpendicular vector for tick marks
-    # We want to make sure it draws ticks inside the work area.
-    # If the line goes strictly up (0,100), uy=1, ux=0
-    # px = -uy = -1. This would make it go into negative X (out of bounds).
-    # So we'll take the absolute value of the normal to ensure we go +X / +Y
     px = -uy
     py = ux
     
     tick_len = 3.0 # 3mm ticks
     
-    # If starting at X=0, and px is negative, it will hit a soft limit.
-    # We force the tick to point into the positive quadrant relative to the line.
     if px < 0 and x1 < tick_len:
         px = -px
         py = -py
@@ -295,12 +289,10 @@ def focus_test():
             
     gc.extend([
         'M5',           # Laser off
-        'M400',         # Wait for motions to finish
-        'G90',          # Make sure we're still in absolute pos
-        'G0 X0 Y0 Z0',  # Simultaneously return to origin and lower Z to 0
-        'M400',         # Wait for return to finish
-        'M18',          # Disable steppers until next command
-        'M2'            # End program
+        'G90',          # Absolute pos
+        'G0 Z0',        # Lift Z away safely first 
+        'G0 X0 Y0',     # Return to X0 Y0
+        '$MD',          # FluidNC specific: Disable Motors
     ])
     
     def run_it():
