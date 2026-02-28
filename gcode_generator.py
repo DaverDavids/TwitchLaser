@@ -25,8 +25,8 @@ class GCodeGenerator:
         self.speed       = s.get('speed_mm_per_min', 800)
         self.spindle_max = s.get('spindle_max', 1000)
         
-        # Pull focal height directly from the config
-        self.focal_height = s.get('focal_height_mm', 0.0)
+        # Check both modern and legacy keys from the web UI
+        self.focal_height = s.get('z_height_mm', s.get('z_depth_mm', 0.0))
 
         # Text settings
         t = config.get('text_settings', {})
@@ -163,7 +163,9 @@ class GCodeGenerator:
         self.laser_power  = s.get('power_percent', 40.0)
         self.speed        = s.get('speed_mm_per_min', 800)
         self.spindle_max  = s.get('spindle_max', 1000)
-        self.focal_height = s.get('focal_height_mm', 0.0)
+        
+        # Pull correct key from UI/Config mapping
+        self.focal_height = s.get('z_height_mm', s.get('z_depth_mm', 0.0))
         
         # Convert power % to spindle S-value
         s_val = int((self.laser_power / 100.0) * self.spindle_max)
