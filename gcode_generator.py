@@ -260,11 +260,14 @@ class GCodeGenerator:
             gc.append('')
 
         gc.append('M5')   # laser off
+        gc.append('M400') # Wait for all motions to finish before returning
 
         if use_z:
-            gc.append('G0 Z0')      # Return to the bottom safely
-
-        gc += ['G0 X0 Y0', 'M2']
+            gc.append('G0 X0 Y0 Z0') # Return to X0 Y0 and Z0 simultaneously
+        else:
+            gc.append('G0 X0 Y0')    # Return to X0 Y0
+            
+        gc.extend(['M400', 'M18', 'M2']) # Wait, disable steppers, end program
 
         # Adjust final reported width/height for bolding
         if bold_repeats > 1:
