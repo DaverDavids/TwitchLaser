@@ -5,7 +5,7 @@ Supports standard TTF vector fonts via freetype-py.
 
 import os
 import math
-from freetype import TTFont
+from freetype import Face
 
 from config import config, debug_print
 
@@ -34,7 +34,7 @@ class GCodeGenerator:
         self.engine        = profile[2]
         self.ttf_path      = t.get('ttf_path', 'fonts/arial.ttf')
 
-        self._ttfont = None
+        self._face = None
         self._glyph_cache = {}
 
         # Coordinate offsets (for multi-pass or centering)
@@ -42,10 +42,10 @@ class GCodeGenerator:
         self.offset_y = 0.0
 
     def _init_font(self):
-        """Lazy load TTF font"""
-        if not self._ttfont:
+        """Lazy load TTF font Face"""
+        if not self._face:
             if os.path.exists(self.ttf_path):
-                self._ttfont = TTFont(self.ttf_path)
+                self._face = Face(self.ttf_path)
             else:
                 debug_print(f"TTF font not found at {self.ttf_path}.")
                 # Attempt to load a default system font if arial isn't present
@@ -56,7 +56,7 @@ class GCodeGenerator:
                 ]
                 for p in alt_paths:
                     if os.path.exists(p):
-                        self._ttfont = TTFont(p)
+                        self._face = Face(p)
                         self.ttf_path = p
                         debug_print(f"Loaded fallback font: {p}")
                         break
@@ -67,13 +67,13 @@ class GCodeGenerator:
         Returns a list of polygons (lists of (x,y) tuples).
         """
         self._init_font()
-        if not self._ttfont:
+        if not self._face:
             debug_print("ERROR: No valid TrueType font available to render text.")
             return []
 
         # Calculate a reasonable point size to sample
         # We'll generate it large, then scale it down to exact `height` mm.
-        self._ttfont.set_char_size(48 * 64)
+        self._face.set_char_size(48 * 64)
 
         paths = []
         cursor_x = 0.0
@@ -87,8 +87,8 @@ class GCodeGenerator:
         # 1. Extract raw unscaled glyph points
         for char in text:
             if char not in self._glyph_cache:
-                self._ttfont.load_char(char)
-                slot = self._ttfont.glyph
+                self._face.load_char(char)
+                slot = self._face.glyph
                 outline = slot.outline
                 
                 char_paths = []
