@@ -295,12 +295,14 @@ def focus_test():
             
     gc.extend([
         'M5',
+        'G4 P0.1', # Short dwell to ensure M5 executes before rapid move
         'G0 Z0',
         'G0 X0 Y0',
         'M2'
     ])
     
     def run_it():
+        # Stream the G-code to the laser line by line
         laser.send_gcode(gc)
 
     # Dispatch to background thread so we don't block web worker
