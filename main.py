@@ -76,14 +76,19 @@ def process_queue(laser, layout, gcode_gen, obs):
                 text_height    = config.get('text_settings.initial_height_mm', 5.0)
                 laser_settings = config.get('laser_settings', {})
 
-                width, height = gcode_gen.estimate_dimensions(name, text_height)
+                # Estimate dimensions
+                # Since we pulled out vtext which had native width estimators, 
+                # we just do a quick dry-run generate to get exact mm sizes
+                test_paths = gcode_gen._get_ttf_paths(name, text_height)
+                min_x, min_y, max_x, max_y = gcode_gen._get_text_bounds(test_paths)
+                width = (max_x - min_x) if max_x > min_x else 0
+                height = text_height
                 
                 # Check if UI sent manual coordinate overrides
                 override_rect = job['settings'].get('override_rect') if job.get('settings') else None
                 
                 if override_rect:
                     # User manually specified coordinates
-                    
                     x1 = override_rect.get('x1')
                     y1 = override_rect.get('y1')
                     x2 = override_rect.get('x2')
@@ -124,10 +129,13 @@ def process_queue(laser, layout, gcode_gen, obs):
                 x_machine = x_local + layout.offset_x_mm
                 y_machine  = y_local + layout.offset_y_mm
 
-                gcode, actual_w, actual_h = gcode_gen.text_to_gcode(
-                    name, x_machine, y_machine, final_height,
-                    passes=laser_settings.get('passes', 1),
+                # Dry run again to get scaled bounds
+                gcode = gcode_gen.generate(
+                    name, x_machine, y_machine, width, final_height
                 )
+                
+                actual_w = width
+                actual_h = final_height
                 
                 settings = {
                     'x_local': round(x_local, 2),
@@ -196,19 +204,12 @@ def _run_engrave(job, gcode, name, laser, obs):
 
 
 def _build_gcode_gen():
-    laser_settings = config.get('laser_settings', {})
-    text_settings  = config.get('text_settings',  {})
-    font_key = text_settings.get('font', 'simplex')
-    ttf_path = text_settings.get('ttf_path', None)
-    gen = GCodeGenerator(
-        laser_power      = laser_settings.get('power_percent',    50),
-        speed_mm_per_min = laser_settings.get('speed_mm_per_min', 1000),
-        spindle_max      = laser_settings.get('spindle_max',       1000),
-        font_key         = font_key,
-        ttf_path         = ttf_path,
-    )
+    # In earlier versions GCodeGenerator took kwargs.
+    # It now safely self-initializes directly from the JSON config singleton.
+    gen = GCodeGenerator()
+    
     debug_print(
-        f'GCodeGenerator: font={font_key}  power={gen.laser_power}%  '
+        f'GCodeGenerator: font={gen.font_key}  power={gen.laser_power}%  '
         f'speed={gen.speed} mm/min  spindle_max={gen.spindle_max}'
     )
     return gen
