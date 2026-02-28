@@ -163,7 +163,7 @@ class GCodeGenerator:
         if pattern == 'circle':
             # Distribute points around a circle
             for i in range(1, repeats):
-                angle = (i - 1) * (2 * math.PI / (repeats - 1))
+                angle = (i - 1) * (2 * math.pi / (repeats - 1))
                 offsets.append((math.cos(angle) * offset_mm, math.sin(angle) * offset_mm))
         else:
             # Cross/grid pattern
