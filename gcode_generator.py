@@ -158,12 +158,15 @@ class GCodeGenerator:
         """
         Generates standard FluidNC/GRBL compatible G-code for the text inside the bounding box.
         """
+        # Re-fetch settings right before generation in case they changed via web UI
+        s = config.get('laser_settings', {})
+        self.laser_power  = s.get('power_percent', 40.0)
+        self.speed        = s.get('speed_mm_per_min', 800)
+        self.spindle_max  = s.get('spindle_max', 1000)
+        self.focal_height = s.get('focal_height_mm', 0.0)
+        
         # Convert power % to spindle S-value
         s_val = int((self.laser_power / 100.0) * self.spindle_max)
-
-        # Re-fetch focal height right before generation in case it changed via web UI
-        s = config.get('laser_settings', {})
-        self.focal_height = s.get('focal_height_mm', 0.0)
 
         # 1. Generate Raw Paths
         raw_paths = self._get_ttf_paths(text, box_h)
