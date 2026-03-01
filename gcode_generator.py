@@ -11,23 +11,27 @@ from config import config, debug_print
 
 def _scan_for_fonts(fonts_dir='fonts'):
     """Scans the given directory for TTF files and builds a dictionary profile."""
+    # We define the system paths where common fonts actually exist on Ubuntu/Debian.
+    # The dictionary maps internal key -> (Display Name, line_width, engine, disk_path)
     profiles = {
-        'simplex': ('Simplex (Single line)', 0.4, 'ttf', 'fonts/simplex.ttf'),
-        'times':   ('Times (Standard)', 0.5, 'ttf', 'fonts/times.ttf'),
-        'arial':   ('Arial (Sans-serif)', 0.5, 'ttf', 'fonts/arial.ttf'),
-        'cursive': ('Cursive (Elegant)', 0.3, 'ttf', 'fonts/cursive.ttf'),
-        'impact':  ('Impact (Bold)', 0.6, 'ttf', 'fonts/impact.ttf'),
+        # DejaVu is installed on almost all Linux distros by default
+        'simplex': ('Simplex (Standard Sans)', 0.4, 'ttf', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'),
+        'times':   ('Times (Serif)', 0.5, 'ttf', '/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf'),
+        'arial':   ('Arial (Sans-serif)', 0.5, 'ttf', '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf'),
+        'cursive': ('Cursive (Ubuntu Italic)', 0.3, 'ttf', '/usr/share/fonts/truetype/ubuntu/Ubuntu-Italic.ttf'),
+        'impact':  ('Impact (Ubuntu Bold)', 0.6, 'ttf', '/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf'),
     }
     
+    # Also scan the local 'fonts/' folder for any custom user uploads
     if os.path.exists(fonts_dir):
         for filename in os.listdir(fonts_dir):
             if filename.lower().endswith('.ttf'):
                 key = filename[:-4].lower()
                 path = os.path.join(fonts_dir, filename)
                 
+                # If they upload a custom font matching a default name (like 'arial.ttf'),
+                # override the system path with their local custom file.
                 if key in profiles:
-                    # Fix for case-sensitive filesystems (Linux):
-                    # If Arial.ttf exists, we must overwrite 'fonts/arial.ttf' with 'fonts/Arial.ttf'
                     old = profiles[key]
                     profiles[key] = (old[0], old[1], old[2], path)
                 else:
@@ -183,14 +187,14 @@ class GCodeGenerator:
             debug_print(f"Font '{self.font_key}' not found in profiles, falling back to 'arial'")
             self.font_key = 'arial'
             
-        profile = FONT_PROFILES.get(self.font_key, ('Arial', 0.5, 'ttf', 'fonts/arial.ttf'))
+        profile = FONT_PROFILES.get(self.font_key, ('Arial', 0.5, 'ttf', '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf'))
         self.line_width_mm = profile[1]
         self.engine        = profile[2]
         
         if len(profile) > 3:
             new_ttf_path = profile[3]
         else:
-            new_ttf_path = t.get('ttf_path', f'fonts/{self.font_key}.ttf')
+            new_ttf_path = t.get('ttf_path', f'/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf')
 
         # If font changed, clear cache and trigger reload
         if self._current_font_path != new_ttf_path:
