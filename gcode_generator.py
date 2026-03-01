@@ -180,10 +180,19 @@ class GCodeGenerator:
         profile = FONT_PROFILES[self.font_key]
         self.line_width_mm = profile[1]
         self.engine        = profile[2]
-        new_ttf_path       = t.get('ttf_path', profile[3] if len(profile) > 3 else f'fonts/{self.font_key}.ttf')
+        
+        # We MUST use the profile path from FONT_PROFILES. 
+        # Only fall back to config['ttf_path'] if the profile doesn't specify one.
+        # Otherwise, if the user changes the font in UI, the old `ttf_path` saved
+        # in the config JSON will endlessly override the newly selected font!
+        if len(profile) > 3:
+            new_ttf_path = profile[3]
+        else:
+            new_ttf_path = t.get('ttf_path', f'fonts/{self.font_key}.ttf')
 
         # If font changed, clear cache and trigger reload
         if self._current_font_path != new_ttf_path:
+            debug_print(f"Font change detected! Purging cache. Old: {self._current_font_path}, New: {new_ttf_path}")
             self.ttf_path = new_ttf_path
             self._current_font_path = new_ttf_path
             self._face = None
