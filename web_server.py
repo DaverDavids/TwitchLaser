@@ -70,15 +70,8 @@ def handle_config():
             if 'spindle_max'      in s: gcode_gen.spindle_max = s['spindle_max']
 
         if gcode_gen and 'text_settings' in updates:
-            ts       = updates['text_settings']
-            font_key = ts.get('font', gcode_gen.font_key)
-            profile  = FONT_PROFILES.get(font_key, FONT_PROFILES['simplex'])
-            gcode_gen.font_key      = font_key
-            gcode_gen.line_width_mm = profile[1]
-            gcode_gen.engine        = profile[2]
-            gcode_gen._glyph_cache  = {}
-            gcode_gen.ttf_path = config.get('text_settings.ttf_path', gcode_gen.ttf_path)
-            gcode_gen._ttfont  = None
+            # Re-read settings entirely to trigger the font flush mechanism cleanly
+            gcode_gen._load_settings()
 
         if obs_ctrl and 'obs' in updates:
             obs_ctrl.reconnect()
