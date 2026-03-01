@@ -341,7 +341,7 @@ class GCodeGenerator:
         return commands, scale, min_y, cursor_x * scale
 
     def _get_bold_offsets(self, repeats, offset_mm, pattern):
-        """Calculate offset vectors for bolding/repeating passes"""
+        """Calculate X/Y translation vectors for classic bolding/repeating passes"""
         offsets = [(0.0, 0.0)]
         if repeats <= 1:
             return offsets
@@ -362,6 +362,128 @@ class GCodeGenerator:
                 offsets.append((dx * offset_mm * mult, dy * offset_mm * mult))
                 
         return offsets
+
+    def _get_concentric_offsets(self, repeats, offset_mm):
+        """Calculate morphological inset/outset magnitudes"""
+        if repeats <= 1:
+            return [0.0]
+        offsets = [0.0]
+        for i in range(1, repeats):
+            # i=1: +1*offset, i=2: -1*offset, i=3: +2*offset, i=4: -2*offset
+            sign = 1 if i % 2 == 1 else -1
+            step = (i + 1) // 2
+            offsets.append(sign * step * offset_mm)
+        return offsets
+
+    def _compute_normals(self, commands):
+        """
+        Calculates the vertex normal for every point in a command stream 
+        to allow concentric morphological offsetting.
+        """
+        pt_refs = []
+        pts = []
+        for c_idx, cmd in enumerate(commands):
+            op = cmd[0]
+            if op in ('moveTo', 'lineTo'):
+                pts.append(cmd[1])
+                pt_refs.append((c_idx, 1))
+            elif op == 'qCurveTo':
+                pts.append(cmd[1])
+                pt_refs.append((c_idx, 1))
+                pts.append(cmd[2])
+                pt_refs.append((c_idx, 2))
+            elif op == 'curveTo':
+                pts.append(cmd[1])
+                pt_refs.append((c_idx, 1))
+                pts.append(cmd[2])
+                pt_refs.append((c_idx, 2))
+                pts.append(cmd[3])
+                pt_refs.append((c_idx, 3))
+                
+        contours = []
+        curr = []
+        for i, (c_idx, _) in enumerate(pt_refs):
+            if commands[c_idx][0] == 'moveTo':
+                if curr: contours.append(curr)
+                curr = [i]
+            else:
+                curr.append(i)
+        if curr: contours.append(curr)
+        
+        normals = [(0.0, 0.0)] * len(pts)
+        for contour_indices in contours:
+            N = len(contour_indices)
+            if N < 2: continue
+            
+            first_p = pts[contour_indices[0]]
+            last_p = pts[contour_indices[-1]]
+            is_closed = math.hypot(first_p[0]-last_p[0], first_p[1]-last_p[1]) < 1e-5
+            
+            for i in range(N):
+                curr_i = contour_indices[i]
+                p_curr = pts[curr_i]
+                
+                p_prev = None
+                for step in range(1, N):
+                    prev_i = contour_indices[(i - step) % N] if is_closed else contour_indices[max(0, i - step)]
+                    if math.hypot(pts[prev_i][0] - p_curr[0], pts[prev_i][1] - p_curr[1]) > 1e-5:
+                        p_prev = pts[prev_i]
+                        break
+                if not p_prev: p_prev = p_curr
+                
+                p_next = None
+                for step in range(1, N):
+                    next_i = contour_indices[(i + step) % N] if is_closed else contour_indices[min(N-1, i + step)]
+                    if math.hypot(pts[next_i][0] - p_curr[0], pts[next_i][1] - p_curr[1]) > 1e-5:
+                        p_next = pts[next_i]
+                        break
+                if not p_next: p_next = p_curr
+                
+                d1x = p_curr[0] - p_prev[0]
+                d1y = p_curr[1] - p_prev[1]
+                L1 = math.hypot(d1x, d1y)
+                n1x = d1x/L1 if L1 > 0 else 0.0
+                n1y = d1y/L1 if L1 > 0 else 0.0
+                
+                d2x = p_next[0] - p_curr[0]
+                d2y = p_next[1] - p_curr[1]
+                L2 = math.hypot(d2x, d2y)
+                n2x = d2x/L2 if L2 > 0 else 0.0
+                n2y = d2y/L2 if L2 > 0 else 0.0
+                
+                tx = n1x + n2x
+                ty = n1y + n2y
+                Lt = math.hypot(tx, ty)
+                if Lt > 1e-5:
+                    tx /= Lt
+                    ty /= Lt
+                else:
+                    tx, ty = -n1y, n1x
+                    
+                nx, ny = -ty, tx
+                
+                dot = n1x*n2x + n1y*n2y
+                denom = math.sqrt(max(0.001, (1.0 + dot) / 2.0))
+                miter = 1.0 / denom
+                miter = min(miter, 2.0)
+                
+                normals[curr_i] = (nx * miter, ny * miter)
+                
+        normal_cmds = []
+        curr_pt_idx = 0
+        for cmd in commands:
+            op = cmd[0]
+            if op in ('moveTo', 'lineTo'):
+                normal_cmds.append((op, normals[curr_pt_idx]))
+                curr_pt_idx += 1
+            elif op == 'qCurveTo':
+                normal_cmds.append((op, normals[curr_pt_idx], normals[curr_pt_idx+1]))
+                curr_pt_idx += 2
+            elif op == 'curveTo':
+                normal_cmds.append((op, normals[curr_pt_idx], normals[curr_pt_idx+1], normals[curr_pt_idx+2]))
+                curr_pt_idx += 3
+                
+        return normal_cmds
 
     def generate(self, text, box_x, box_y, box_w, box_h, orientation='horizontal'):
         """
@@ -406,21 +528,36 @@ class GCodeGenerator:
         offset_x += self.offset_x
         offset_y += self.offset_y
 
-        offsets = self._get_bold_offsets(bold_repeats, bold_offset_mm, bold_pattern)
+        if bold_pattern == 'concentric':
+            offset_amounts = self._get_concentric_offsets(bold_repeats, bold_offset_mm)
+            offsets = [(0.0, 0.0)] * bold_repeats
+            normal_cmds = self._compute_normals(raw_commands)
+        else:
+            offset_amounts = [0.0] * bold_repeats
+            offsets = self._get_bold_offsets(bold_repeats, bold_offset_mm, bold_pattern)
+            normal_cmds = None
 
-        def _tx(pt, bx, by):
+        def _tx(pt, norm_vec, amt, bx, by):
             mx = pt[0] * active_scale
+            my = (pt[1] - min_y_raw) * active_scale
+            
             if mirror_y:
                 my = (box_h / final_scale - (pt[1] - min_y_raw)) * active_scale
-            else:
-                my = (pt[1] - min_y_raw) * active_scale
-            return (mx + offset_x + bx, my + offset_y + by)
+                
+            # Apply concentric morphological offset
+            nx = norm_vec[0] * amt
+            ny = norm_vec[1] * amt
+            
+            if mirror_y:
+                ny = -ny
+                
+            return (mx + offset_x + bx + nx, my + offset_y + by + ny)
 
         gcode = [
             f"; TwitchLaser Engrave: '{text}'",
             "; Engine: " + self.engine,
             "; Bounding Box: X{:.1f} Y{:.1f} W{:.1f} H{:.1f}".format(box_x, box_y, box_w, box_h),
-            f"; Passes: {passes} | Bold Repeats: {bold_repeats}",
+            f"; Passes: {passes} | Bold Repeats: {bold_repeats} ({bold_pattern})",
             "G21 ; Millimeters",
             "G90 ; Absolute positioning",
             "M5  ; Ensure laser is off",
@@ -429,38 +566,48 @@ class GCodeGenerator:
 
         # 4. G-Code generation loop
         for p in range(passes):
-            for b_idx, (bx, by) in enumerate(offsets):
+            for b_idx in range(bold_repeats):
+                bx, by = offsets[b_idx]
+                amt = offset_amounts[b_idx]
+                
                 if passes > 1 or bold_repeats > 1:
-                    gcode.append(f"; --- Pass {p+1}/{passes} | Bold Offset {b_idx+1}/{bold_repeats} (dX:{bx:.3f} dY:{by:.3f}) ---")
+                    if bold_pattern == 'concentric':
+                        gcode.append(f"; --- Pass {p+1}/{passes} | Concentric Offset {b_idx+1}/{bold_repeats} (Shift: {amt:+.3f}mm) ---")
+                    else:
+                        gcode.append(f"; --- Pass {p+1}/{passes} | Bold Offset {b_idx+1}/{bold_repeats} (dX:{bx:.3f} dY:{by:.3f}) ---")
                 
                 current_pos = None
                 
-                for cmd in raw_commands:
+                for c_idx, cmd in enumerate(raw_commands):
                     op = cmd[0]
+                    n_cmd = normal_cmds[c_idx] if normal_cmds else None
+                    
+                    def _get_n(idx):
+                        return n_cmd[idx] if n_cmd else (0.0, 0.0)
                     
                     if op == 'moveTo':
-                        mpt = _tx(cmd[1], bx, by)
+                        mpt = _tx(cmd[1], _get_n(1), amt, bx, by)
                         gcode.append(f"G0 X{mpt[0]:.3f} Y{mpt[1]:.3f}")
                         gcode.append(f"M4 S{s_val}") # Dynamic laser mode activates
                         current_pos = mpt
                         
                     elif op == 'lineTo':
-                        mpt = _tx(cmd[1], bx, by)
+                        mpt = _tx(cmd[1], _get_n(1), amt, bx, by)
                         gcode.append(f"G1 X{mpt[0]:.3f} Y{mpt[1]:.3f} F{self.speed}")
                         current_pos = mpt
                         
                     elif op == 'qCurveTo':
-                        mcp = _tx(cmd[1], bx, by)
-                        mep = _tx(cmd[2], bx, by)
+                        mcp = _tx(cmd[1], _get_n(1), amt, bx, by)
+                        mep = _tx(cmd[2], _get_n(2), amt, bx, by)
                         if current_pos:
                             arc_lines = _quad_to_arc_or_lines_machine(current_pos, mcp, mep, self.speed)
                             gcode.extend(arc_lines)
                         current_pos = mep
                         
                     elif op == 'curveTo':
-                        mcp1 = _tx(cmd[1], bx, by)
-                        mcp2 = _tx(cmd[2], bx, by)
-                        mep  = _tx(cmd[3], bx, by)
+                        mcp1 = _tx(cmd[1], _get_n(1), amt, bx, by)
+                        mcp2 = _tx(cmd[2], _get_n(2), amt, bx, by)
+                        mep  = _tx(cmd[3], _get_n(3), amt, bx, by)
                         if current_pos:
                             arc_lines = _cubic_to_arc_or_lines_machine(current_pos, mcp1, mcp2, mep, self.speed)
                             gcode.extend(arc_lines)
