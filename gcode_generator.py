@@ -11,32 +11,16 @@ from config import config, debug_print
 
 def _scan_for_fonts(fonts_dir='fonts'):
     """Scans the given directory for TTF files and builds a dictionary profile."""
-    # We define the system paths where common fonts actually exist on Ubuntu/Debian.
-    # The dictionary maps internal key -> (Display Name, line_width, engine, disk_path)
-    profiles = {
-        # DejaVu is installed on almost all Linux distros by default
-        'simplex': ('Simplex (Standard Sans)', 0.4, 'ttf', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'),
-        'times':   ('Times (Serif)', 0.5, 'ttf', '/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf'),
-        'arial':   ('Arial (Sans-serif)', 0.5, 'ttf', '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf'),
-        'cursive': ('Cursive (Ubuntu Italic)', 0.3, 'ttf', '/usr/share/fonts/truetype/ubuntu/Ubuntu-Italic.ttf'),
-        'impact':  ('Impact (Ubuntu Bold)', 0.6, 'ttf', '/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf'),
-    }
+    profiles = {}
     
-    # Also scan the local 'fonts/' folder for any custom user uploads
+    # Only scan the local 'fonts/' folder for any custom user uploads
     if os.path.exists(fonts_dir):
         for filename in os.listdir(fonts_dir):
             if filename.lower().endswith('.ttf'):
                 key = filename[:-4].lower()
                 path = os.path.join(fonts_dir, filename)
-                
-                # If they upload a custom font matching a default name (like 'arial.ttf'),
-                # override the system path with their local custom file.
-                if key in profiles:
-                    old = profiles[key]
-                    profiles[key] = (old[0], old[1], old[2], path)
-                else:
-                    label = filename[:-4].replace('_', ' ').title()
-                    profiles[key] = (label, 0.5, 'ttf', path)
+                label = filename[:-4].replace('_', ' ').title()
+                profiles[key] = (label, 0.5, 'ttf', path)
                     
     return profiles
 
@@ -178,23 +162,28 @@ class GCodeGenerator:
         self.focal_height = s.get('z_height_mm', s.get('z_depth_mm', 0.0))
 
         t = config.get('text_settings', {})
-        self.font_key = t.get('font', 'arial')
+        self.font_key = t.get('font', '')
 
         global FONT_PROFILES
         FONT_PROFILES = _scan_for_fonts()
 
+        # Fallback handling if chosen font is missing or empty
         if self.font_key not in FONT_PROFILES:
-            debug_print(f"Font '{self.font_key}' not found in profiles, falling back to 'arial'")
-            self.font_key = 'arial'
-            
-        profile = FONT_PROFILES.get(self.font_key, ('Arial', 0.5, 'ttf', '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf'))
-        self.line_width_mm = profile[1]
-        self.engine        = profile[2]
-        
-        if len(profile) > 3:
+            if FONT_PROFILES:
+                self.font_key = list(FONT_PROFILES.keys())[0]
+                debug_print(f"Requested font not found, falling back to first available: {self.font_key}")
+            else:
+                self.font_key = 'none'
+
+        if FONT_PROFILES and self.font_key in FONT_PROFILES:
+            profile = FONT_PROFILES[self.font_key]
+            self.line_width_mm = profile[1]
+            self.engine        = profile[2]
             new_ttf_path = profile[3]
         else:
-            new_ttf_path = t.get('ttf_path', f'/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf')
+            self.line_width_mm = 0.5
+            self.engine = 'ttf'
+            new_ttf_path = 'fonts/none.ttf'
 
         # If font changed, clear cache and trigger reload
         if self._current_font_path != new_ttf_path:
@@ -207,6 +196,10 @@ class GCodeGenerator:
     def _init_font(self):
         """Lazy load TTF font Face"""
         if not self._face:
+            if not FONT_PROFILES:
+                debug_print("WARNING: No fonts found in 'fonts' directory! Please upload at least one .ttf file.")
+                return
+
             debug_print(f"Attempting to initialize font at: {self.ttf_path}")
             if os.path.exists(self.ttf_path):
                 try:
@@ -216,20 +209,6 @@ class GCodeGenerator:
                     debug_print(f"Freetype error loading {self.ttf_path}: {e}")
             else:
                 debug_print(f"TTF font NOT FOUND on disk at {self.ttf_path}.")
-                alt_paths = [
-                    '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-                    '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
-                    '/usr/share/fonts/truetype/freefont/FreeSans.ttf'
-                ]
-                for p in alt_paths:
-                    if os.path.exists(p):
-                        try:
-                            self._face = Face(p)
-                            self.ttf_path = p
-                            debug_print(f"Successfully loaded fallback font: {p}")
-                            break
-                        except Exception as e:
-                            debug_print(f"Freetype error loading fallback {p}: {e}")
 
     def _get_ttf_commands(self, text, height):
         """
