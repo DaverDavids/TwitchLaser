@@ -23,10 +23,15 @@ def _scan_for_fonts(fonts_dir='fonts'):
         for filename in os.listdir(fonts_dir):
             if filename.lower().endswith('.ttf'):
                 key = filename[:-4].lower()
-                # Don't overwrite our default labeled ones if they exist
-                if key not in profiles:
+                path = os.path.join(fonts_dir, filename)
+                
+                if key in profiles:
+                    # Fix for case-sensitive filesystems (Linux):
+                    # If Arial.ttf exists, we must overwrite 'fonts/arial.ttf' with 'fonts/Arial.ttf'
+                    old = profiles[key]
+                    profiles[key] = (old[0], old[1], old[2], path)
+                else:
                     label = filename[:-4].replace('_', ' ').title()
-                    path = os.path.join(fonts_dir, filename)
                     profiles[key] = (label, 0.5, 'ttf', path)
                     
     return profiles
@@ -175,16 +180,13 @@ class GCodeGenerator:
         FONT_PROFILES = _scan_for_fonts()
 
         if self.font_key not in FONT_PROFILES:
+            debug_print(f"Font '{self.font_key}' not found in profiles, falling back to 'arial'")
             self.font_key = 'arial'
             
-        profile = FONT_PROFILES[self.font_key]
+        profile = FONT_PROFILES.get(self.font_key, ('Arial', 0.5, 'ttf', 'fonts/arial.ttf'))
         self.line_width_mm = profile[1]
         self.engine        = profile[2]
         
-        # We MUST use the profile path from FONT_PROFILES. 
-        # Only fall back to config['ttf_path'] if the profile doesn't specify one.
-        # Otherwise, if the user changes the font in UI, the old `ttf_path` saved
-        # in the config JSON will endlessly override the newly selected font!
         if len(profile) > 3:
             new_ttf_path = profile[3]
         else:
@@ -192,7 +194,7 @@ class GCodeGenerator:
 
         # If font changed, clear cache and trigger reload
         if self._current_font_path != new_ttf_path:
-            debug_print(f"Font change detected! Purging cache. Old: {self._current_font_path}, New: {new_ttf_path}")
+            debug_print(f"Font path change detected! Purging cache. Old: {self._current_font_path}, New: {new_ttf_path}")
             self.ttf_path = new_ttf_path
             self._current_font_path = new_ttf_path
             self._face = None
@@ -201,10 +203,15 @@ class GCodeGenerator:
     def _init_font(self):
         """Lazy load TTF font Face"""
         if not self._face:
+            debug_print(f"Attempting to initialize font at: {self.ttf_path}")
             if os.path.exists(self.ttf_path):
-                self._face = Face(self.ttf_path)
+                try:
+                    self._face = Face(self.ttf_path)
+                    debug_print(f"Successfully loaded font: {self.ttf_path}")
+                except Exception as e:
+                    debug_print(f"Freetype error loading {self.ttf_path}: {e}")
             else:
-                debug_print(f"TTF font not found at {self.ttf_path}.")
+                debug_print(f"TTF font NOT FOUND on disk at {self.ttf_path}.")
                 alt_paths = [
                     '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
                     '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
@@ -212,10 +219,13 @@ class GCodeGenerator:
                 ]
                 for p in alt_paths:
                     if os.path.exists(p):
-                        self._face = Face(p)
-                        self.ttf_path = p
-                        debug_print(f"Loaded fallback font: {p}")
-                        break
+                        try:
+                            self._face = Face(p)
+                            self.ttf_path = p
+                            debug_print(f"Successfully loaded fallback font: {p}")
+                            break
+                        except Exception as e:
+                            debug_print(f"Freetype error loading fallback {p}: {e}")
 
     def _get_ttf_commands(self, text, height):
         """
@@ -224,7 +234,7 @@ class GCodeGenerator:
         """
         self._init_font()
         if not self._face:
-            debug_print("ERROR: No valid TrueType font available to render text.")
+            debug_print("ERROR: No valid TrueType font available to render text. Font Face is None.")
             return [], 1.0, 0, 0
 
         self._face.set_char_size(48 * 64)
@@ -233,6 +243,7 @@ class GCodeGenerator:
         cursor_x = 0.0
         max_y = -999999
         min_y = 999999
+        valid_chars_found = False
 
         for char in text:
             if char not in self._glyph_cache:
@@ -240,12 +251,9 @@ class GCodeGenerator:
                 slot = self._face.glyph
                 outline = slot.outline
                 
-                # Decompose the FreeType outline into drawing commands
                 char_commands = []
-                
                 start = 0
                 for end in outline.contours:
-                    # freetype outlines are stored as a flat list of points and tags
                     points = outline.points[start:end+1]
                     tags = outline.tags[start:end+1]
                     
@@ -253,18 +261,15 @@ class GCodeGenerator:
                         start = end + 1
                         continue
                         
-                    # Find first ON point
                     first_on = 0
                     for i in range(len(tags)):
-                        if tags[i] & 1:  # FT_CURVE_TAG_ON is bit 0
+                        if tags[i] & 1:
                             first_on = i
                             break
                     else:
-                        # No ON points at all (rare, usually a single quadratic). We skip for safety.
                         start = end + 1
                         continue
                         
-                    # Rotate arrays so first element is ON
                     points = points[first_on:] + points[:first_on]
                     tags = tags[first_on:] + tags[:first_on]
                     
@@ -274,7 +279,6 @@ class GCodeGenerator:
                     while i < len(points):
                         tag = tags[i]
                         pt = points[i]
-                        
                         is_on = (tag & 1)
                         is_cubic = (tag & 2)
                         
@@ -282,7 +286,6 @@ class GCodeGenerator:
                             char_commands.append(('lineTo', pt))
                             i += 1
                         elif not is_cubic:
-                            # Quadratic curve (CONIC)
                             cp = pt
                             i += 1
                             if i < len(points):
@@ -292,15 +295,11 @@ class GCodeGenerator:
                                     char_commands.append(('qCurveTo', cp, next_pt))
                                     i += 1
                                 else:
-                                    # Two off-curve points implies an on-curve point halfway between them
                                     mid_pt = ((cp[0] + next_pt[0]) / 2.0, (cp[1] + next_pt[1]) / 2.0)
                                     char_commands.append(('qCurveTo', cp, mid_pt))
-                                    # Do not increment i, next_pt becomes the cp for the next curve
                             else:
-                                # Loops back to start
                                 char_commands.append(('qCurveTo', cp, points[0]))
                         else:
-                            # Cubic curve
                             cp1 = pt
                             if i + 2 < len(points):
                                 cp2 = points[i+1]
@@ -308,12 +307,10 @@ class GCodeGenerator:
                                 char_commands.append(('curveTo', cp1, cp2, end_pt))
                                 i += 3
                             else:
-                                # Incomplete cubic at end of contour, loop to start
                                 cp2 = points[i+1] if i + 1 < len(points) else points[0]
                                 char_commands.append(('curveTo', cp1, cp2, points[0]))
                                 break
                     
-                    # Close path
                     char_commands.append(('lineTo', points[0]))
                     start = end + 1
 
@@ -322,7 +319,9 @@ class GCodeGenerator:
 
             char_commands, advance = self._glyph_cache[char]
             
-            # Shift the raw commands by cursor_x, and track bounds
+            if char_commands:
+                valid_chars_found = True
+            
             for cmd in char_commands:
                 op = cmd[0]
                 if op in ('moveTo', 'lineTo'):
@@ -349,12 +348,15 @@ class GCodeGenerator:
                     
             cursor_x += advance
 
+        if not valid_chars_found:
+            debug_print(f"WARNING: The font '{self.font_key}' generated no visible contours for the text '{text}'.")
+            return [], 1.0, 0, 0
+
         raw_height = max_y - min_y
         if raw_height < 1e-5:
             return [], 1.0, 0, 0
             
         scale = height / raw_height
-        
         return commands, scale, min_y, cursor_x * scale
 
     def _get_bold_offsets(self, repeats, offset_mm, pattern):
