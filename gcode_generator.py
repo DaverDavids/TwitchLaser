@@ -153,14 +153,21 @@ def _cubic_to_arc_or_lines_machine(p0, p1, p2, p3, feed):
 
 class GCodeGenerator:
     def __init__(self):
-        # Laser settings
+        self._face = None
+        self._glyph_cache = {}
+        self._current_font_path = None
+        self.offset_x = 0.0
+        self.offset_y = 0.0
+        self._load_settings()
+
+    def _load_settings(self):
+        """Loads settings from config and updates font face if needed"""
         s = config.get('laser_settings', {})
         self.laser_power = s.get('power_percent', 40.0)
         self.speed       = s.get('speed_mm_per_min', 800)
         self.spindle_max = s.get('spindle_max', 1000)
         self.focal_height = s.get('z_height_mm', s.get('z_depth_mm', 0.0))
 
-        # Text settings
         t = config.get('text_settings', {})
         self.font_key = t.get('font', 'arial')
 
@@ -173,13 +180,14 @@ class GCodeGenerator:
         profile = FONT_PROFILES[self.font_key]
         self.line_width_mm = profile[1]
         self.engine        = profile[2]
-        self.ttf_path      = t.get('ttf_path', profile[3] if len(profile) > 3 else f'fonts/{self.font_key}.ttf')
+        new_ttf_path       = t.get('ttf_path', profile[3] if len(profile) > 3 else f'fonts/{self.font_key}.ttf')
 
-        self._face = None
-        self._glyph_cache = {}
-
-        self.offset_x = 0.0
-        self.offset_y = 0.0
+        # If font changed, clear cache and trigger reload
+        if self._current_font_path != new_ttf_path:
+            self.ttf_path = new_ttf_path
+            self._current_font_path = new_ttf_path
+            self._face = None
+            self._glyph_cache = {}
 
     def _init_font(self):
         """Lazy load TTF font Face"""
@@ -489,13 +497,10 @@ class GCodeGenerator:
         """
         Generates standard FluidNC/GRBL compatible G-code for the text inside the bounding box.
         """
+        self._load_settings()
+        
         s = config.get('laser_settings', {})
         t = config.get('text_settings', {})
-        
-        self.laser_power  = s.get('power_percent', 40.0)
-        self.speed        = s.get('speed_mm_per_min', 800)
-        self.spindle_max  = s.get('spindle_max', 1000)
-        self.focal_height = s.get('z_height_mm', s.get('z_depth_mm', 0.0))
         
         passes         = int(s.get('passes', 1))
         bold_repeats   = int(t.get('bold_repeats', 1))
