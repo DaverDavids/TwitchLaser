@@ -55,6 +55,9 @@ def process_queue(laser, layout, gcode_gen, obs):
             name = job['name']
             debug_print(f"Processing job {job['id']}: {name}")
 
+            # Always reload settings from config right before rendering
+            gcode_gen._load_settings()
+
             # Check if this job is a redo (already has gcode generated)
             gcode_path = job_mgr.get_gcode_path(job['id'])
             if gcode_path and os.path.exists(gcode_path):
