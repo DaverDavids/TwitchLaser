@@ -3,6 +3,7 @@ Layout Manager - Tracks placed names and finds empty spaces on the engraving boa
 """
 
 import json
+import math
 import os
 import random
 import shutil
@@ -118,12 +119,18 @@ class LayoutManager:
 
         Algorithm:
           1. If name is wider than the active area, shrink until it fits.
-          2. Shuffle-scan grid positions to avoid clustering at (0,0).
-          3. If no space found, shrink 20 % and recurse.
+          2. Collect all valid (non-overlapping) grid positions, then pick one
+             with weighted-random selection.  The weight for each candidate is
+             its distance to the nearest existing-placement centre, so positions
+             in the emptiest part of the board get the highest probability while
+             the result still varies each call.
+             When the board is empty a plain random.choice() is used instead.
+          3. If no valid position exists at the current size, shrink 20 % and
+             recurse.
           4. Return (x_local, y_local, final_text_height) or None.
         """
-        grid_size = 2.0   # mm
-        min_height = 2.0  # mm — absolute floor
+        grid_size  = 2.0   # mm
+        min_height = 2.0   # mm — absolute floor
 
         # Step 1: force-fit width
         while required_width > self.width_mm and text_height > min_height:
@@ -138,22 +145,48 @@ class LayoutManager:
             debug_print('Cannot fit name even at minimum height.')
             return None
 
-        # Step 2: scan candidate positions (randomised so board fills evenly)
+        # Step 2: collect valid positions, then weighted-random pick
         max_x = self.width_mm  - required_width
         max_y = self.height_mm - required_height
 
-        if max_x < 0 or max_y < 0:
-            # Falls through to shrink step
-            pass
-        else:
+        if max_x >= 0 and max_y >= 0:
             xs = list(range(0, int(max_x) + 1, max(1, int(grid_size))))
             ys = list(range(0, int(max_y) + 1, max(1, int(grid_size))))
-            positions = [(x, y) for x in xs for y in ys]
-            random.shuffle(positions)
 
-            for x, y in positions:
-                if self._is_space_empty(x, y, required_width, required_height):
-                    return (float(x), float(y), text_height)
+            valid = [
+                (x, y)
+                for x in xs for y in ys
+                if self._is_space_empty(x, y, required_width, required_height)
+            ]
+
+            if valid:
+                if not self.placements:
+                    # Board is empty — pure random
+                    x, y = random.choice(valid)
+                else:
+                    # Weight each candidate by its distance to the nearest
+                    # existing placement centre.  Farther away = emptier area
+                    # = higher probability of being chosen.
+                    half_w = required_width  / 2.0
+                    half_h = required_height / 2.0
+                    pl_centres = [
+                        (pl['x'] + pl['width']  / 2.0,
+                         pl['y'] + pl['height'] / 2.0)
+                        for pl in self.placements
+                    ]
+
+                    def _weight(x, y):
+                        cx, cy = x + half_w, y + half_h
+                        return max(
+                            min(math.hypot(cx - px, cy - py)
+                                for px, py in pl_centres),
+                            0.1   # prevent zero-weight edge case
+                        )
+
+                    weights = [_weight(x, y) for x, y in valid]
+                    (x, y) = random.choices(valid, weights=weights, k=1)[0]
+
+                return (float(x), float(y), text_height)
 
         # Step 3: shrink and recurse
         if text_height > min_height:
