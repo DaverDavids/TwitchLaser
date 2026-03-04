@@ -5,6 +5,7 @@ Supports standard TTF vector fonts via freetype-py.
 
 import os
 import math
+import random
 from freetype import Face, FT_CURVE_TAG_ON, FT_CURVE_TAG_CONIC, FT_CURVE_TAG_CUBIC
 
 from config import config, debug_print
@@ -162,10 +163,18 @@ class GCodeGenerator:
         self.focal_height = s.get('z_height_mm', s.get('z_depth_mm', 0.0))
 
         t = config.get('text_settings', {})
-        self.font_key = t.get('font', '')
+        raw_font = t.get('font', 'random')
 
         global FONT_PROFILES
         FONT_PROFILES = _scan_for_fonts()
+        
+        # Handle 'random' font selection
+        if raw_font == 'random' and FONT_PROFILES:
+            # Re-seed to ensure it's different each run, or just pick one randomly
+            self.font_key = random.choice(list(FONT_PROFILES.keys()))
+            debug_print(f"Random font selected: {self.font_key}")
+        else:
+            self.font_key = raw_font
 
         # Fallback handling if chosen font is missing or empty
         if self.font_key not in FONT_PROFILES:
