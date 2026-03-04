@@ -64,9 +64,13 @@ class Config:
             'text_settings': {
                 'initial_height_mm': 5.0,
                 'min_height_mm':     2.0,
-                'font':              'simplex',
+                'font':              'random', # Changed default to random to represent the new option
                 'spacing_mm':        2.0,
                 'ttf_path':          '/usr/share/fonts/truetype/hack/Hack-Regular.ttf',
+                'bold_repeats':      1,
+                'bold_offset_mm':    0.15,
+                'bold_pattern':      'cross',
+                'mirror_y':          False
             },
             'twitch_enabled':     True,
             'camera_enabled':     True,
