@@ -391,7 +391,7 @@
     </div>
 
     <!-- WORK AREA -->
-    <div class="card">
+    <div class="card span-2">
         <h3>Work Area</h3>
         <div class="form-grid">
             <div><label>Machine Width (mm)</label><input type="number" id="wa-mw" min="1" max="2000" step="1" value="200"></div>
@@ -400,6 +400,12 @@
             <div><label>Active Height (mm)</label><input type="number" id="wa-ah" min="1" max="2000" step="1" value="298"></div>
             <div><label>Offset X (mm)</label><input type="number" id="wa-ox" min="0" max="2000" step="1" value="0"></div>
             <div><label>Offset Y (mm)</label><input type="number" id="wa-oy" min="0" max="2000" step="1" value="0"></div>
+            <div><label>Edge Margin (mm)</label><input type="number" id="wa-em" min="0" max="100" step="0.5" value="1.5">
+                 <p class="hint">Keep names away from bed edges.</p>
+            </div>
+            <div><label>Name Padding (mm)</label><input type="number" id="wa-np" min="0" max="100" step="0.5" value="1.5">
+                 <p class="hint">Minimum gap between engraved names.</p>
+            </div>
         </div>
         <div class="btn-row">
             <button onclick="saveWorkArea()">&#128190; Apply</button>
@@ -700,7 +706,8 @@ async function loadWorkArea() {
     var d = await api('/api/work_area');
     if (d.machine){setVal('wa-mw',d.machine.width_mm);setVal('wa-mh',d.machine.height_mm);}
     if (d.active) {setVal('wa-aw',d.active.width_mm); setVal('wa-ah',d.active.height_mm);
-                   setVal('wa-ox',d.active.offset_x);  setVal('wa-oy',d.active.offset_y);}
+                   setVal('wa-ox',d.active.offset_x);  setVal('wa-oy',d.active.offset_y);
+                   setVal('wa-em',d.active.edge_margin_mm || 1.5); setVal('wa-np',d.active.name_padding_mm || 1.5);}
     drawCanvas(d);
 }
 async function saveWorkArea() {
@@ -710,7 +717,9 @@ async function saveWorkArea() {
         active_width_mm:  +document.getElementById('wa-aw').value,
         active_height_mm: +document.getElementById('wa-ah').value,
         offset_x_mm:      +document.getElementById('wa-ox').value,
-        offset_y_mm:      +document.getElementById('wa-oy').value
+        offset_y_mm:      +document.getElementById('wa-oy').value,
+        edge_margin_mm:   +document.getElementById('wa-em').value,
+        name_padding_mm:  +document.getElementById('wa-np').value
     };
     var r=await api('/api/work_area','POST',body);
     if(r.success){flashOk('wa-ok');log('Work area applied','#00c853');drawVisualizer();}
@@ -824,6 +833,8 @@ function drawCanvas(d) {
     ctx.strokeStyle='#252525';ctx.lineWidth=0.5;
     for(var gx=50;gx<mw;gx+=50){var gpx=PAD+gx*scale;ctx.beginPath();ctx.moveTo(gpx,PAD);ctx.lineTo(gpx,PAD+mh*scale);ctx.stroke();}
     for(var gy=50;gy<mh;gy+=50){var gpy=PAD+gy*scale;ctx.beginPath();ctx.moveTo(PAD,gpy);ctx.lineTo(PAD+mw*scale,gpy);ctx.stroke();}
+    
+    // Draw Active Area
     if(d.active&&d.active.width_mm){
         var ax=PAD+d.active.offset_x*scale,ay=PAD+d.active.offset_y*scale;
         var aw=d.active.width_mm*scale,ah=d.active.height_mm*scale;
@@ -832,7 +843,16 @@ function drawCanvas(d) {
         ctx.setLineDash([7,3]);ctx.strokeRect(ax,ay,aw,ah);ctx.setLineDash([]);
         ctx.fillStyle='#9147ff';ctx.font='10px sans-serif';
         ctx.fillText('Active '+d.active.width_mm+'x'+d.active.height_mm+'mm  offset ('+d.active.offset_x+','+d.active.offset_y+')',ax+4,ay+13);
+        
+        // Visualize Edge Margin if > 0
+        var em = d.active.edge_margin_mm || 0;
+        if(em > 0 && aw > em*2*scale && ah > em*2*scale) {
+            ctx.strokeStyle='rgba(145,71,255,0.4)';
+            ctx.lineWidth=1;
+            ctx.strokeRect(ax + em*scale, ay + em*scale, aw - em*2*scale, ah - em*2*scale);
+        }
     }
+    
     var ox=d.active?d.active.offset_x:0,oy=d.active?d.active.offset_y:0;
     (d.placements||[]).forEach(function(p){
         var px=PAD+(p.abs_x!==undefined?p.abs_x:p.x+ox)*scale;
