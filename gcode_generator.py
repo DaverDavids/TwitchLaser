@@ -81,11 +81,16 @@ def _quad_to_arc_or_lines_machine(p0, cp, p3, feed):
     Fit a G2/G3 arc to a quadratic Bezier in machine coordinates.
     """
     MIN_RADIUS  = 0.05
-    MAX_ARC_ERR = 0.08
+    MAX_ARC_ERR = 0.15  # Loosened to prevent excessive subdividing
 
     seg_len = math.hypot(p3[0]-p0[0], p3[1]-p0[1])
-    if seg_len < 1e-6:
-        return []
+    
+    # If segment is microscopic (<0.3mm), just draw a straight G1 line.
+    # This prevents GRBL's motion planner from starving on micro-arcs.
+    if seg_len < 0.3:
+        if seg_len < 1e-6:
+            return []
+        return [f'G1 X{p3[0]:.3f} Y{p3[1]:.3f} F{feed}']
 
     mid = _quad_midpoint(p0, cp, p3)
     center = _circumcenter(p0, mid, p3)
@@ -113,11 +118,16 @@ def _cubic_to_arc_or_lines_machine(p0, p1, p2, p3, feed):
     Fit a G2/G3 arc to a cubic Bezier given in machine coordinates.
     """
     MIN_RADIUS  = 0.05
-    MAX_ARC_ERR = 0.08
+    MAX_ARC_ERR = 0.15  # Loosened to prevent excessive subdividing
 
     seg_len = math.hypot(p3[0]-p0[0], p3[1]-p0[1])
-    if seg_len < 1e-6:
-        return []
+    
+    # If segment is microscopic (<0.3mm), just draw a straight G1 line.
+    # This prevents GRBL's motion planner from starving on micro-arcs.
+    if seg_len < 0.3:
+        if seg_len < 1e-6:
+            return []
+        return [f'G1 X{p3[0]:.3f} Y{p3[1]:.3f} F{feed}']
 
     mid = _bezier_midpoint(p0, p1, p2, p3)
     center = _circumcenter(p0, mid, p3)
