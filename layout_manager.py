@@ -33,6 +33,10 @@ class LayoutManager:
         self.offset_x_mm     = offset_x_mm
         self.offset_y_mm     = offset_y_mm
 
+        # Margins and padding (mm), configurable from config/web UI
+        self.edge_margin_mm  = _cfg.get('engraving_area.edge_margin_mm', 1.5)
+        self.name_padding_mm = _cfg.get('engraving_area.name_padding_mm', 1.5)
+
         self.placements = []
         self.load()
 
@@ -111,7 +115,6 @@ class LayoutManager:
         debug_print('Cleared all placements')
 
     # ── Space finder ──────────────────────────────────────────
-    PADDING_MM = 1.5   # minimum gap between names
 
     def find_empty_space(self, required_width, required_height, text_height):
         """
@@ -146,12 +149,16 @@ class LayoutManager:
             return None
 
         # Step 2: collect valid positions, then weighted-random pick
-        max_x = self.width_mm  - required_width
-        max_y = self.height_mm - required_height
+        # We ensure the entire bounding box plus edge margin stays within active area.
+        max_x = self.width_mm  - required_width  - 2.0 * self.edge_margin_mm
+        max_y = self.height_mm - required_height - 2.0 * self.edge_margin_mm
 
         if max_x >= 0 and max_y >= 0:
-            xs = list(range(0, int(max_x) + 1, max(1, int(grid_size))))
-            ys = list(range(0, int(max_y) + 1, max(1, int(grid_size))))
+            x_start = int(self.edge_margin_mm)
+            y_start = int(self.edge_margin_mm)
+
+            xs = list(range(x_start, int(x_start + max_x) + 1, max(1, int(grid_size))))
+            ys = list(range(y_start, int(y_start + max_y) + 1, max(1, int(grid_size))))
 
             valid = [
                 (x, y)
@@ -164,6 +171,12 @@ class LayoutManager:
                     # Board is empty — pure random
                     x, y = random.choice(valid)
                 else:
+                    # Randomly sample to prevent event loop blocking when calculating math.hypot
+                    if len(valid) > 100:
+                        candidates = random.sample(valid, 100)
+                    else:
+                        candidates = valid
+
                     # Weight each candidate by its distance to the nearest
                     # existing placement centre.  Farther away = emptier area
                     # = higher probability of being chosen.
@@ -183,8 +196,8 @@ class LayoutManager:
                             0.1   # prevent zero-weight edge case
                         )
 
-                    weights = [_weight(x, y) for x, y in valid]
-                    (x, y) = random.choices(valid, weights=weights, k=1)[0]
+                    weights = [_weight(x, y) for x, y in candidates]
+                    (x, y) = random.choices(candidates, weights=weights, k=1)[0]
 
                 return (float(x), float(y), text_height)
 
@@ -202,13 +215,13 @@ class LayoutManager:
         return None
 
     def _is_space_empty(self, x, y, width, height):
-        """True if the rectangle (x,y,width,height) does not overlap any placement."""
-        p = self.PADDING_MM
+        """True if the rectangle (x,y,width,height) plus padding does not overlap any placement."""
+        p = self.name_padding_mm
         for pl in self.placements:
             if not (
-                x + width  + p <= pl['x']          or
-                x           - p >= pl['x'] + pl['width']  or
-                y + height + p <= pl['y']          or
+                x + width  + p <= pl['x']                  or
+                x           - p >= pl['x'] + pl['width']   or
+                y + height + p <= pl['y']                  or
                 y           - p >= pl['y'] + pl['height']
             ):
                 return False
