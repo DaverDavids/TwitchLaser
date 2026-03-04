@@ -260,15 +260,16 @@
     </div>
 
     <!-- TEXT / FONT SETTINGS -->
-    <div class="card span-2">
+    <!-- Removed span-2 to condense into 1-wide panel -->
+    <div class="card">
         <h3>Text &amp; Font Settings</h3>
         <div class="form-grid">
             <div>
-                <label>Initial Height (mm)</label>
+                <label>Initial H. (mm)</label>
                 <input type="number" id="s-height" min="2" max="50" step="0.5" value="5">
             </div>
             <div>
-                <label>Min Height (mm)</label>
+                <label>Min H. (mm)</label>
                 <input type="number" id="s-min-height" min="1" max="20" step="0.5" value="2">
             </div>
             <div style="grid-column:1/-1">
@@ -278,34 +279,52 @@
             
             <!-- BOLDING OPTIONS -->
             <div>
-                <label>Bolding / Retrace Repeats</label>
+                <label>Bold Repeats</label>
                 <input type="number" id="s-bold-repeats" min="1" max="10" step="1" value="1">
-                <p class="hint">1 = normal, >1 adds offset paths</p>
             </div>
             <div>
-                <label>Bolding Offset (mm)</label>
+                <label>Offset (mm)</label>
                 <input type="number" id="s-bold-offset" min="0.05" max="2.0" step="0.05" value="0.15">
             </div>
-            <div>
+            <div style="grid-column:1/-1">
                 <label>Bolding Pattern</label>
                 <select id="s-bold-pattern">
                     <option value="cross">Cross (+ shape)</option>
                     <option value="circle">Circular (rounded)</option>
-                    <option value="concentric">Concentric (Outward/Inward)</option>
+                    <option value="concentric">Concentric (In/Out)</option>
                 </select>
             </div>
-            <div>
+            <div style="grid-column:1/-1">
                 <label>Y-Axis Text Direction</label>
                 <select id="s-mirror-y">
-                    <option value="false">Standard CNC (+Y is UP/AWAY)</option>
-                    <option value="true">Mirrored (+Y is DOWN/TOWARD)</option>
+                    <option value="false">Standard (+Y UP)</option>
+                    <option value="true">Mirrored (+Y DOWN)</option>
                 </select>
-                <p class="hint">Flips text vertically</p>
             </div>
         </div>
         <div class="btn-row">
-            <button onclick="saveTextSettings()">&#128190; Save Text Settings</button>
+            <button onclick="saveTextSettings()">&#128190; Save Settings</button>
             <span class="save-ok" id="text-ok">&#10003; Saved</span>
+        </div>
+    </div>
+
+    <!-- WORK AREA -->
+    <!-- Removed span-2 to condense into 1-wide panel -->
+    <div class="card">
+        <h3>Work Area</h3>
+        <div class="form-grid">
+            <div><label>Mach. W (mm)</label><input type="number" id="wa-mw" min="1" max="2000" step="1" value="200"></div>
+            <div><label>Mach. H (mm)</label><input type="number" id="wa-mh" min="1" max="2000" step="1" value="298"></div>
+            <div><label>Active W (mm)</label><input type="number" id="wa-aw" min="1" max="2000" step="1" value="200"></div>
+            <div><label>Active H (mm)</label><input type="number" id="wa-ah" min="1" max="2000" step="1" value="298"></div>
+            <div><label>Offset X (mm)</label><input type="number" id="wa-ox" min="0" max="2000" step="1" value="0"></div>
+            <div><label>Offset Y (mm)</label><input type="number" id="wa-oy" min="0" max="2000" step="1" value="0"></div>
+            <div><label>Edge Pad (mm)</label><input type="number" id="wa-em" min="0" max="100" step="0.5" value="1.5"></div>
+            <div><label>Name Pad (mm)</label><input type="number" id="wa-np" min="0" max="100" step="0.5" value="1.5"></div>
+        </div>
+        <div class="btn-row">
+            <button onclick="saveWorkArea()">&#128190; Apply</button>
+            <span class="save-ok" id="wa-ok">&#10003; Applied</span>
         </div>
     </div>
 
@@ -318,11 +337,11 @@
                 <input type="number" id="s-power" min="0" max="100" step="1" value="50">
             </div>
             <div>
-                <label>Spindle Max (S)</label>
+                <label>Spindle Max</label>
                 <input type="number" id="s-spindle-max" min="100" max="10000" step="100" value="1000">
             </div>
             <div>
-                <label>Speed (mm/min)</label>
+                <label>Speed (mm/m)</label>
                 <input type="number" id="s-speed" min="100" max="10000" step="100" value="1000">
             </div>
             <div>
@@ -336,7 +355,7 @@
             </div>
         </div>
         <div class="btn-row">
-            <button onclick="saveLaserSettings()">&#128190; Save Laser Settings</button>
+            <button onclick="saveLaserSettings()">&#128190; Save Settings</button>
             <span class="save-ok" id="laser-ok">&#10003; Saved</span>
         </div>
     </div>
@@ -390,28 +409,6 @@
         <div id="obs-result" style="margin-top:8px; font-size:0.8rem; color:#adadb8;"></div>
     </div>
 
-    <!-- WORK AREA -->
-    <div class="card span-2">
-        <h3>Work Area</h3>
-        <div class="form-grid">
-            <div><label>Machine Width (mm)</label><input type="number" id="wa-mw" min="1" max="2000" step="1" value="200"></div>
-            <div><label>Machine Height (mm)</label><input type="number" id="wa-mh" min="1" max="2000" step="1" value="298"></div>
-            <div><label>Active Width (mm)</label><input type="number" id="wa-aw" min="1" max="2000" step="1" value="200"></div>
-            <div><label>Active Height (mm)</label><input type="number" id="wa-ah" min="1" max="2000" step="1" value="298"></div>
-            <div><label>Offset X (mm)</label><input type="number" id="wa-ox" min="0" max="2000" step="1" value="0"></div>
-            <div><label>Offset Y (mm)</label><input type="number" id="wa-oy" min="0" max="2000" step="1" value="0"></div>
-            <div><label>Edge Margin (mm)</label><input type="number" id="wa-em" min="0" max="100" step="0.5" value="1.5">
-                 <p class="hint">Keep names away from bed edges.</p>
-            </div>
-            <div><label>Name Padding (mm)</label><input type="number" id="wa-np" min="0" max="100" step="0.5" value="1.5">
-                 <p class="hint">Minimum gap between engraved names.</p>
-            </div>
-        </div>
-        <div class="btn-row">
-            <button onclick="saveWorkArea()">&#128190; Apply</button>
-            <span class="save-ok" id="wa-ok">&#10003; Applied</span>
-        </div>
-    </div>
 
     <!-- SYSTEM CONTROLS -->
     <div class="card">
@@ -511,6 +508,12 @@ async function loadFonts() {
         var fonts = await api('/api/fonts');
         var sel   = document.getElementById('s-font');
         sel.innerHTML = '';
+        
+        // Add random option first
+        var randOpt = document.createElement('option');
+        randOpt.value = 'random'; randOpt.textContent = 'Random (per job)';
+        sel.appendChild(randOpt);
+        
         fonts.forEach(function(f) {
             var opt = document.createElement('option');
             opt.value = f.key; opt.textContent = f.label;
