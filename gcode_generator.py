@@ -245,6 +245,8 @@ class GCodeGenerator:
         cursor_x = 0.0
         max_y = -999999
         min_y = 999999
+        max_x = -999999
+        min_x = 999999
         valid_chars_found = False
 
         for char in text:
@@ -331,14 +333,20 @@ class GCodeGenerator:
                     shifted = (pt[0] + cursor_x, pt[1])
                     if shifted[1] > max_y: max_y = shifted[1]
                     if shifted[1] < min_y: min_y = shifted[1]
+                    if shifted[0] > max_x: max_x = shifted[0]
+                    if shifted[0] < min_x: min_x = shifted[0]
                     commands.append((op, shifted))
                 elif op == 'qCurveTo':
                     cp = (cmd[1][0] + cursor_x, cmd[1][1])
                     ep = (cmd[2][0] + cursor_x, cmd[2][1])
                     if cp[1] > max_y: max_y = cp[1]
                     if cp[1] < min_y: min_y = cp[1]
+                    if cp[0] > max_x: max_x = cp[0]
+                    if cp[0] < min_x: min_x = cp[0]
                     if ep[1] > max_y: max_y = ep[1]
                     if ep[1] < min_y: min_y = ep[1]
+                    if ep[0] > max_x: max_x = ep[0]
+                    if ep[0] < min_x: min_x = ep[0]
                     commands.append((op, cp, ep))
                 elif op == 'curveTo':
                     cp1 = (cmd[1][0] + cursor_x, cmd[1][1])
@@ -346,20 +354,27 @@ class GCodeGenerator:
                     ep  = (cmd[3][0] + cursor_x, cmd[3][1])
                     if ep[1] > max_y: max_y = ep[1]
                     if ep[1] < min_y: min_y = ep[1]
+                    if ep[0] > max_x: max_x = ep[0]
+                    if ep[0] < min_x: min_x = ep[0]
                     commands.append((op, cp1, cp2, ep))
                     
             cursor_x += advance
 
         if not valid_chars_found:
             debug_print(f"WARNING: The font '{self.font_key}' generated no visible contours for the text '{text}'.")
-            return [], 1.0, 0, 0
+            return [], 1.0, 0, 0, 0
 
         raw_height = max_y - min_y
         if raw_height < 1e-5:
-            return [], 1.0, 0, 0
+            return [], 1.0, 0, 0, 0
             
         scale = height / raw_height
-        return commands, scale, min_y, cursor_x * scale
+        
+        # We must return the absolute true width of the drawn points, NOT the advance width.
+        # Script fonts often have swashes that extend far past the 'cursor_x' position.
+        physical_w_scaled = (max_x - min_x) * scale
+        
+        return commands, scale, min_y, min_x, physical_w_scaled
 
     def _get_bold_offsets(self, repeats, offset_mm, pattern):
         """Calculate X/Y translation vectors for classic bolding/repeating passes"""
@@ -523,8 +538,8 @@ class GCodeGenerator:
         
         s_val = int((self.laser_power / 100.0) * self.spindle_max)
 
-        # 1. Extract vector geometry
-        raw_commands, scale, min_y_raw, raw_w_scaled = self._get_ttf_commands(text, box_h)
+        # 1. Extract vector geometry (Now captures physical extents via min_x, raw_w_scaled)
+        raw_commands, scale, min_y_raw, min_x_raw, raw_w_scaled = self._get_ttf_commands(text, box_h)
 
         if not raw_commands:
             return "; Error: No paths generated"
@@ -556,8 +571,8 @@ class GCodeGenerator:
             normal_cmds = None
 
         def _tx(pt, norm_vec, amt, bx, by):
-            mx = pt[0] * active_scale
-            # Scale raw FreeType points directly to millimeter coordinates first
+            # Scale raw FreeType points and SHIFT them so that min_x starts exactly at 0
+            mx = (pt[0] - min_x_raw) * active_scale
             my = (pt[1] - min_y_raw) * active_scale
             
             if mirror_y:
