@@ -156,7 +156,7 @@
     <div class="card">
         <h3>Laser Controls</h3>
         <div class="btn-row">
-            <button onclick="laserCmd('home')">&#127968; Home</button>
+            <button onclick="laserCmd('home')">&#127968; Home All</button>
             <button class="secondary" onclick="laserCmd('unlock')">&#128275; Unlock</button>
             <button class="danger" onclick="laserCmd('stop')">&#9940; E-Stop</button>
         </div>
@@ -414,30 +414,45 @@
     <div class="card">
         <h3>&#9874; Machine &amp; System Controls</h3>
         
-        <div class="form-grid" style="grid-template-columns: 1fr; gap: 10px; margin-bottom: 12px;">
-            <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
-                <span style="font-size:0.8rem; color:#adadb8; width: 45px;">Jog:</span>
-                <button class="secondary" style="padding:4px 8px;" onclick="jog('X-')" title="Left">X-</button>
-                <button class="secondary" style="padding:4px 8px;" onclick="jog('X+')" title="Right">X+</button>
-                <button class="secondary" style="padding:4px 8px;" onclick="jog('Y-')" title="Up">Y-</button>
-                <button class="secondary" style="padding:4px 8px;" onclick="jog('Y+')" title="Down">Y+</button>
-                <select id="jog-step" style="width:auto; padding:3px; margin-left: auto;">
-                    <option value="0.1">0.1 mm</option>
-                    <option value="1">1 mm</option>
-                    <option value="10" selected>10 mm</option>
-                    <option value="50">50 mm</option>
-                </select>
+        <div style="display: flex; gap: 10px; align-items: center; justify-content: center; margin-bottom: 15px; background: #111; padding: 12px 8px; border-radius: 8px; border: 1px solid #2d2d35;">
+            <!-- XY D-Pad -->
+            <div style="display: grid; grid-template-columns: 42px 46px 42px; grid-template-rows: 36px 36px 36px; gap: 4px; text-align: center;">
+                <div></div>
+                <button class="secondary" onclick="jog('Y-')" title="Y- (Up)" style="padding:0; font-weight:bold;">Y-</button>
+                <div></div>
+
+                <button class="secondary" onclick="jog('X-')" title="X- (Left)" style="padding:0; font-weight:bold;">X-</button>
+                <button class="secondary" onclick="homeAxis('XY')" title="Home XY" style="padding:0; font-size:0.75rem; background:#3a3a43; border:1px solid #555;">H-XY</button>
+                <button class="secondary" onclick="jog('X+')" title="X+ (Right)" style="padding:0; font-weight:bold;">X+</button>
+
+                <div></div>
+                <button class="secondary" onclick="jog('Y+')" title="Y+ (Down)" style="padding:0; font-weight:bold;">Y+</button>
+                <div></div>
             </div>
-            
-            <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
-                <span style="font-size:0.8rem; color:#adadb8; width: 45px;">Go To:</span>
-                <input type="number" id="abs-x" placeholder="X" style="width:65px; padding:4px;">
-                <input type="number" id="abs-y" placeholder="Y" style="width:65px; padding:4px;">
-                <button class="success" style="padding:4px 10px; margin-left: auto;" onclick="goToAbs()">Go</button>
+
+            <!-- Z Pad -->
+            <div style="display: grid; grid-template-columns: 46px; grid-template-rows: 36px 36px 36px; gap: 4px; text-align: center; margin-left: 5px;">
+                <button class="secondary" onclick="jog('Z+')" title="Z+ (Up)" style="padding:0; font-weight:bold;">Z+</button>
+                <button class="secondary" onclick="homeAxis('Z')" title="Home Z" style="padding:0; font-size:0.75rem; background:#3a3a43; border:1px solid #555;">H-Z</button>
+                <button class="secondary" onclick="jog('Z-')" title="Z- (Down)" style="padding:0; font-weight:bold;">Z-</button>
+            </div>
+
+            <!-- Settings -->
+            <div style="display: flex; flex-direction: column; gap: 6px; width: 55px; margin-left: 5px;">
+                <label style="margin:0; font-size:0.7rem; text-align:center; color:#adadb8;">Step(mm)</label>
+                <input type="number" id="jog-step" value="10" step="0.1" style="text-align:center; padding:6px 2px; font-size: 0.8rem;">
             </div>
         </div>
 
-        <div class="danger-zone" style="padding:10px;">
+        <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; justify-content: center;">
+            <span style="font-size:0.75rem; color:#adadb8;">Go To:</span>
+            <input type="number" id="abs-x" placeholder="X" style="width:60px; padding:4px;">
+            <input type="number" id="abs-y" placeholder="Y" style="width:60px; padding:4px;">
+            <input type="number" id="abs-z" placeholder="Z" style="width:60px; padding:4px;">
+            <button class="success" style="padding:4px 10px;" onclick="goToAbs()">Go</button>
+        </div>
+
+        <div class="danger-zone" style="padding:10px; margin-top:0;">
             <div class="btn-row" style="margin-top:0;">
                 <button class="danger" style="flex:1;" onclick="resetBoard()">&#128465; Reset Board</button>
                 <button class="warn" style="flex:1;" onclick="restartService()">&#128260; Restart Svc</button>
@@ -585,20 +600,34 @@ async function jog(axisDir) {
     var axis = axisDir.charAt(0);
     var dir = axisDir.charAt(1);
     var dist = dir === '+' ? step : '-' + step;
+    var feed = axis === 'Z' ? 500 : 3000;
     
     // Grbl 1.1 jogging command
-    var cmd = '$J=G91 F3000 ' + axis + dist;
+    var cmd = '$J=G91 F' + feed + ' ' + axis + dist;
     var r = await api('/api/laser_command', 'POST', {command: cmd});
     log('Jog: ' + cmd, r.success ? '#efeff1' : '#e91916');
+}
+
+async function homeAxis(axes) {
+    if (axes === 'XY') {
+        await api('/api/laser_command', 'POST', {command: '$HX'});
+        var r = await api('/api/laser_command', 'POST', {command: '$HY'});
+        log('Home XY', r.success ? '#efeff1' : '#e91916');
+    } else if (axes === 'Z') {
+        var r = await api('/api/laser_command', 'POST', {command: '$HZ'});
+        log('Home Z', r.success ? '#efeff1' : '#e91916');
+    }
 }
 
 async function goToAbs() {
     var x = document.getElementById('abs-x').value;
     var y = document.getElementById('abs-y').value;
-    if (x === '' && y === '') return;
+    var z = document.getElementById('abs-z').value;
+    if (x === '' && y === '' && z === '') return;
     var cmd = 'G90 G0';
     if (x !== '') cmd += ' X' + x;
     if (y !== '') cmd += ' Y' + y;
+    if (z !== '') cmd += ' Z' + z;
     var r = await api('/api/laser_command', 'POST', {command: cmd});
     log('Go To: ' + cmd, r.success ? '#efeff1' : '#e91916');
 }
