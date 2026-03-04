@@ -29,6 +29,10 @@ engraving_area = {
     'active_height_mm': 100,
     'offset_x_mm': 50,
     'offset_y_mm': 100,
+    
+    # Padding
+    'edge_margin_mm': 1.5,
+    'name_padding_mm': 1.5,
 }
 
 def debug_print(*args, **kwargs):
@@ -47,6 +51,8 @@ class Config:
                 'active_height_mm':  298,
                 'offset_x_mm':       0,
                 'offset_y_mm':       0,
+                'edge_margin_mm':    1.5,
+                'name_padding_mm':   1.5,
             },
             'laser_settings': {
                 'power_percent':    50,
