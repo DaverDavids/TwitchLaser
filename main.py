@@ -81,9 +81,11 @@ def process_queue(laser, layout, gcode_gen, obs):
 
                 # Estimate dimensions
                 # We do a quick dry-run generate of the raw commands to get exact mm width
-                _, _, _, raw_width = gcode_gen._get_ttf_commands(name, text_height)
+                _, _, _, _, raw_width = gcode_gen._get_ttf_commands(name, text_height)
                 width = raw_width
                 height = text_height
+                
+                target_w = width
                 
                 # Check if UI sent manual coordinate overrides
                 override_rect = job['settings'].get('override_rect') if job.get('settings') else None
@@ -106,10 +108,12 @@ def process_queue(laser, layout, gcode_gen, obs):
                         
                         scale_factor = min(manual_w / width, manual_h / height) if width > 0 and height > 0 else 1.0
                         final_height = text_height * scale_factor
+                        target_w = manual_w
                         debug_print(f"Using manual bounding box override: {override_rect}")
                     else:
                         # Only start coordinates provided, use default text height
                         final_height = text_height
+                        target_w = width
                         debug_print(f"Using manual start point override (natural dimensions): X={x1}, Y={y1}")
                         
                     position = (x_local, y_local, final_height)
@@ -117,6 +121,10 @@ def process_queue(laser, layout, gcode_gen, obs):
                 else:
                     # Standard auto-placement
                     position = layout.find_empty_space(width, height, text_height)
+                    if position:
+                        # The layout manager might have shrunk the text. We must shrink our target_w to match!
+                        _, _, final_height = position
+                        target_w = width * (final_height / text_height)
 
                 if not position:
                     debug_print(f"No space for '{name}' — requeueing")
@@ -130,12 +138,12 @@ def process_queue(laser, layout, gcode_gen, obs):
                 x_machine = x_local + layout.offset_x_mm
                 y_machine  = y_local + layout.offset_y_mm
 
-                # Dry run again to get scaled bounds
+                # Generate the final GCode
                 gcode = gcode_gen.generate(
-                    name, x_machine, y_machine, width, final_height
+                    name, x_machine, y_machine, target_w, final_height
                 )
                 
-                actual_w = width
+                actual_w = target_w
                 actual_h = final_height
                 
                 settings = {
