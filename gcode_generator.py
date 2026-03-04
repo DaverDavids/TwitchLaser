@@ -547,10 +547,12 @@ class GCodeGenerator:
 
         def _tx(pt, norm_vec, amt, bx, by):
             mx = pt[0] * active_scale
+            # Scale raw FreeType points directly to millimeter coordinates first
             my = (pt[1] - min_y_raw) * active_scale
             
             if mirror_y:
-                my = (box_h / final_scale - (pt[1] - min_y_raw)) * active_scale
+                # Apply mirroring IN MILLIMETERS, relative to the scaled text height
+                my = final_h - my
                 
             # Apply concentric morphological offset
             nx = norm_vec[0] * amt
