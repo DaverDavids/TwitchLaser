@@ -26,6 +26,10 @@ class LaserController:
     # ── Connection ────────────────────────────────────────────
     def connect(self):
         """Connect to FluidNC via network or serial"""
+        if self._engraving:
+            debug_print("Cannot connect while actively engraving!")
+            return False
+            
         try:
             if self.connection_type == 'network':
                 self._connect_network()
@@ -69,6 +73,10 @@ class LaserController:
 
     def reconnect(self):
         """Attempt to reconnect"""
+        if self._engraving:
+            debug_print("Blocked reconnect attempt during active engrave.")
+            return False
+            
         debug_print("Attempting to reconnect to FluidNC...")
         self.disconnect()
         time.sleep(2)
