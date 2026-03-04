@@ -158,9 +158,13 @@ def laser_stop():
 
 @app.route('/api/laser_reconnect', methods=['POST'])
 def laser_reconnect():
-    ok = laser.reconnect()
-    return jsonify({'success': ok, 'connected': laser.connected,
-                    'message': 'Reconnected' if ok else 'Reconnect failed'})
+    # Force disconnect first to release the socket before reconnecting
+    if laser:
+        laser.disconnect()
+        ok = laser.reconnect()
+        return jsonify({'success': ok, 'connected': laser.connected,
+                        'message': 'Reconnected' if ok else 'Reconnect failed'})
+    return jsonify({'success': False, 'message': 'Laser module not loaded'})
 
 
 # ── Engraving progress & stop endpoints ─────────────────
