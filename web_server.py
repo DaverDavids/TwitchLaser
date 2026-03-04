@@ -101,6 +101,13 @@ def work_area():
         for f in required:
             if f not in data:
                 return jsonify({'success': False, 'message': f'Missing: {f}'}), 400
+                
+        # Optional padding fields
+        if 'edge_margin_mm' not in data:
+            data['edge_margin_mm'] = config.get('engraving_area.edge_margin_mm', 1.5)
+        if 'name_padding_mm' not in data:
+            data['name_padding_mm'] = config.get('engraving_area.name_padding_mm', 1.5)
+            
         config.set('engraving_area', data)
         if layout:
             layout.machine_width_mm  = data['machine_width_mm']
@@ -109,6 +116,8 @@ def work_area():
             layout.height_mm         = data['active_height_mm']
             layout.offset_x_mm       = data['offset_x_mm']
             layout.offset_y_mm       = data['offset_y_mm']
+            layout.edge_margin_mm    = data['edge_margin_mm']
+            layout.name_padding_mm   = data['name_padding_mm']
         return jsonify({'success': True})
 
     if layout:
@@ -118,7 +127,9 @@ def work_area():
             'active':     {'width_mm':  layout.width_mm,
                            'height_mm': layout.height_mm,
                            'offset_x':  layout.offset_x_mm,
-                           'offset_y':  layout.offset_y_mm},
+                           'offset_y':  layout.offset_y_mm,
+                           'edge_margin_mm': getattr(layout, 'edge_margin_mm', 1.5),
+                           'name_padding_mm': getattr(layout, 'name_padding_mm', 1.5)},
             'placements': layout.placements,
         })
     return jsonify({'machine': {}, 'active': {}, 'placements': []}), 503
