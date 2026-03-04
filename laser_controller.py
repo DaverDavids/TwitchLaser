@@ -19,6 +19,7 @@ class LaserController:
         self._monitor_thread = None
         self._monitor_running = False
         self._engraving = False  # flag to pause monitor during jobs
+        self._abort_flag = False # flag to interrupt gcode stream immediately
         self.connect()
         self._start_monitor()
 
@@ -145,6 +146,9 @@ class LaserController:
     def _read_line(self, max_wait_seconds=15.0):
         start = time.time()
         while time.time() - start < max_wait_seconds:
+            if getattr(self, '_abort_flag', False):
+                return "ALARM: aborted by software"
+                
             # Check if we have a full line in buffer
             if '\n' in self._line_buf:
                 line, self._line_buf = self._line_buf.split('\n', 1)
@@ -222,6 +226,7 @@ class LaserController:
         debug_print(f"Sending {total} G-code commands...")
 
         with self.lock:
+            self._abort_flag = False
             if not self.connected:
                 if not self.reconnect():
                     if log_file: log_file.write("ABORT: Not connected\n"); log_file.close()
@@ -232,6 +237,11 @@ class LaserController:
 
             try:
                 for i, cmd in enumerate(commands):
+                    if getattr(self, '_abort_flag', False):
+                        err_msg = "Job aborted by user/E-Stop"
+                        if log_file: log_file.write(f"ABORT: {err_msg}\n"); log_file.close()
+                        return False, err_msg
+                        
                     try:
                         if self.connection_type == 'network':
                             self.connection.sendall((cmd + '\n').encode())
@@ -268,20 +278,32 @@ class LaserController:
                             log_file.write(f"  RECV: {response}\n")
                             log_file.flush()
                         
+                        if lc == 'ok':
+                            break
+                            
+                        if 'grbl' in lc or 'fluidnc' in lc:
+                            err_msg = f"Controller reset detected at line {i + 1} ({cmd})"
+                            debug_print(err_msg)
+                            if log_file: log_file.write(f"RESET_DETECTED: {err_msg}\n")
+                            return False, err_msg
+                            
+                        if lc.startswith('error') or lc.startswith('alarm'):
+                            err_msg = f"FluidNC {response} at line {i + 1} ({cmd})"
+                            debug_print(err_msg)
+                            if log_file: log_file.write(f"ERROR_DETECTED: {err_msg}\n")
+                            return False, err_msg
+                            
                         # Skip non-response lines
                         if (lc.startswith('[echo:') or 
                             lc.startswith('<') or 
                             lc.startswith('[gc:') or 
                             lc.startswith('[msg:')):
                             continue
-                            
-                        if lc == 'ok':
-                            break
-                        elif lc.startswith('error') or lc.startswith('alarm'):
-                            err_msg = f"FluidNC {response} at line {i + 1} ({cmd})"
-                            debug_print(err_msg)
-                            if log_file: log_file.write(f"ERROR_DETECTED: {err_msg}\n")
-                            break
+
+                    if getattr(self, '_abort_flag', False):
+                        err_msg = "Job aborted by user/E-Stop"
+                        if log_file: log_file.write(f"ABORT: {err_msg}\n"); log_file.close()
+                        return False, err_msg
 
                     if progress_callback:
                         progress_callback(i + 1, total)
@@ -313,15 +335,16 @@ class LaserController:
 
     def stop(self):
         debug_print("EMERGENCY STOP")
+        self._abort_flag = True
         try:
             if self.connection_type == 'network':
-                self.connection.sendall(b'!\n')
+                self.connection.sendall(b'!')
                 time.sleep(0.1)
-                self.connection.sendall(b'\x18\n')
+                self.connection.sendall(b'\x18')
             else:
-                self.connection.write(b'!\n')
+                self.connection.write(b'!')
                 time.sleep(0.1)
-                self.connection.write(b'\x18\n')
-        except Exception:
-            pass
+                self.connection.write(b'\x18')
+        except Exception as e:
+            debug_print(f"Stop command failed to send: {e}")
         return True, "Stopped"
