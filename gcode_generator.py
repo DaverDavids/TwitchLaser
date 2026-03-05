@@ -237,7 +237,7 @@ class GCodeGenerator:
         self._init_font()
         if not self._face:
             debug_print("ERROR: No valid TrueType font available to render text. Font Face is None.")
-            return [], 1.0, 0, 0
+            return [], 1.0, 0, 0, 0
 
         self._face.set_char_size(48 * 64)
         
@@ -352,6 +352,17 @@ class GCodeGenerator:
                     cp1 = (cmd[1][0] + cursor_x, cmd[1][1])
                     cp2 = (cmd[2][0] + cursor_x, cmd[2][1])
                     ep  = (cmd[3][0] + cursor_x, cmd[3][1])
+                    
+                    if cp1[1] > max_y: max_y = cp1[1]
+                    if cp1[1] < min_y: min_y = cp1[1]
+                    if cp1[0] > max_x: max_x = cp1[0]
+                    if cp1[0] < min_x: min_x = cp1[0]
+                    
+                    if cp2[1] > max_y: max_y = cp2[1]
+                    if cp2[1] < min_y: min_y = cp2[1]
+                    if cp2[0] > max_x: max_x = cp2[0]
+                    if cp2[0] < min_x: min_x = cp2[0]
+                    
                     if ep[1] > max_y: max_y = ep[1]
                     if ep[1] < min_y: min_y = ep[1]
                     if ep[0] > max_x: max_x = ep[0]
