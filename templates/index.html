@@ -20,6 +20,12 @@
         .dot.warn { background: #ffa000; box-shadow: 0 0 6px #ffa000; }
         .badge { display: inline-block; background: #2d2d35; border-radius: 4px; padding: 2px 8px; font-size: 0.78rem; font-family: monospace; }
         .stat-group { display: flex; gap: 12px; border-left: 1px solid #3a3a43; padding-left: 16px; margin-left: 4px; }
+        .state-badge { display: inline-block; background: #2d2d35; border-radius: 4px; padding: 2px 8px; font-size: 0.78rem; font-weight: bold; font-family: monospace; letter-spacing: 0.5px; }
+        .state-badge.idle { color: #00c853; }
+        .state-badge.run { color: #9147ff; }
+        .state-badge.alarm { background: #b91c1c; color: white; animation: blink 1s infinite; }
+        
+        @keyframes blink { 50% { opacity: 0.5; } }
 
         /* GRID LAYOUT */
         .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; max-width: 1400px; margin: 0 auto; }
@@ -30,7 +36,7 @@
         }
 
         .card { background: #18181b; border: 1px solid #2d2d35; border-radius: 10px; padding: 18px; }
-        .card h3 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 1px; color: #9147ff; margin-bottom: 14px; border-bottom: 1px solid #2d2d35; padding-bottom: 8px; }
+        .card h3 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 1px; color: #9147ff; margin-bottom: 14px; border-bottom: 1px solid #2d2d35; padding-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
 
         button { background: #9147ff; color: #fff; border: none; border-radius: 6px; padding: 8px 14px; cursor: pointer; font-size: 0.85rem; transition: background 0.15s; }
         button:hover         { background: #772ce8; }
@@ -126,6 +132,22 @@
             border-style: solid; 
             border-color: transparent transparent #9147ff transparent; 
         }
+
+        .mpos-display {
+            font-family: monospace;
+            background: #000;
+            border: 1px inset #3a3a43;
+            border-radius: 4px;
+            padding: 4px 8px;
+            color: #00c853;
+            font-size: 1.1rem;
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            margin-bottom: 12px;
+        }
+        .mpos-val { font-weight: bold; }
+        .mpos-lbl { color: #6b6b78; font-size: 0.8rem; margin-right: 2px;}
     </style>
 </head>
 <body>
@@ -143,24 +165,83 @@
         <div class="status-item"><span class="dot" id="dot-obs"></span> OBS</div>
         
         <div class="stat-group">
+            <div class="status-item">State: <span class="state-badge" id="machine-state">UNKNOWN</span></div>
             <div class="status-item">Pending: <span class="badge" id="stat-queue">0</span></div>
             <div class="status-item">Names: <span class="badge" id="stat-names">0</span></div>
-            <div class="status-item">Coverage: <span class="badge" id="stat-coverage">0%</span></div>
         </div>
     </div>
 </div>
 
 <div class="grid">
 
+    <!-- MACHINE & SYSTEM CONTROLS -->
+    <div class="card">
+        <h3>
+            <span>&#9874; Machine Controls</span>
+            <span style="font-size:0.75rem; color:#adadb8; text-transform:none; font-weight:normal; letter-spacing:0;">Position (mm)</span>
+        </h3>
+        
+        <!-- LIVE POSITION -->
+        <div class="mpos-display">
+            <div><span class="mpos-lbl">X</span><span class="mpos-val" id="mpos-x">0.000</span></div>
+            <div><span class="mpos-lbl">Y</span><span class="mpos-val" id="mpos-y">0.000</span></div>
+            <div><span class="mpos-lbl">Z</span><span class="mpos-val" id="mpos-z">0.000</span></div>
+        </div>
+        
+        <div style="display: flex; gap: 10px; align-items: center; justify-content: center; margin-bottom: 15px; background: #111; padding: 12px 8px; border-radius: 8px; border: 1px solid #2d2d35;">
+            <!-- XY D-Pad -->
+            <div style="display: grid; grid-template-columns: 42px 46px 42px; grid-template-rows: 36px 36px 36px; gap: 4px; text-align: center;">
+                <div></div>
+                <button class="secondary" onclick="jog('Y-')" title="Y- (Up)" style="padding:0; font-weight:bold;">Y-</button>
+                <div></div>
+
+                <button class="secondary" onclick="jog('X-')" title="X- (Left)" style="padding:0; font-weight:bold;">X-</button>
+                <button class="secondary" onclick="homeAxis('XY')" title="Home XY" style="padding:0; font-size:0.75rem; background:#3a3a43; border:1px solid #555;">H-XY</button>
+                <button class="secondary" onclick="jog('X+')" title="X+ (Right)" style="padding:0; font-weight:bold;">X+</button>
+
+                <div></div>
+                <button class="secondary" onclick="jog('Y+')" title="Y+ (Down)" style="padding:0; font-weight:bold;">Y+</button>
+                <div></div>
+            </div>
+
+            <!-- Z Pad -->
+            <div style="display: grid; grid-template-columns: 46px; grid-template-rows: 36px 36px 36px; gap: 4px; text-align: center; margin-left: 5px;">
+                <button class="secondary" onclick="jog('Z+')" title="Z+ (Up)" style="padding:0; font-weight:bold;">Z+</button>
+                <button class="secondary" onclick="homeAxis('Z')" title="Home Z" style="padding:0; font-size:0.75rem; background:#3a3a43; border:1px solid #555;">H-Z</button>
+                <button class="secondary" onclick="jog('Z-')" title="Z- (Down)" style="padding:0; font-weight:bold;">Z-</button>
+            </div>
+
+            <!-- Settings -->
+            <div style="display: flex; flex-direction: column; gap: 6px; width: 55px; margin-left: 5px;">
+                <label style="margin:0; font-size:0.7rem; text-align:center; color:#adadb8;">Step(mm)</label>
+                <input type="number" id="jog-step" value="10" step="0.1" style="text-align:center; padding:6px 2px; font-size: 0.8rem;">
+            </div>
+        </div>
+
+        <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; justify-content: center;">
+            <span style="font-size:0.75rem; color:#adadb8;">Go To:</span>
+            <input type="number" id="abs-x" placeholder="X" style="width:60px; padding:4px;">
+            <input type="number" id="abs-y" placeholder="Y" style="width:60px; padding:4px;">
+            <input type="number" id="abs-z" placeholder="Z" style="width:60px; padding:4px;">
+            <button class="success" style="padding:4px 10px;" onclick="goToAbs()">Go</button>
+        </div>
+    </div>
+
+
     <!-- LASER CONTROLS -->
     <div class="card">
-        <h3>Laser Controls</h3>
+        <h3>General Controls</h3>
         <div class="btn-row">
             <button onclick="laserCmd('home')">&#127968; Home All</button>
             <button class="secondary" onclick="laserCmd('unlock')">&#128275; Unlock</button>
+            <button class="secondary" onclick="laserCmd('resume')">&#9654; Resume</button>
             <button class="danger" onclick="laserCmd('stop')">&#9940; E-Stop</button>
         </div>
-        <div class="btn-row">
+        <div class="btn-row" style="margin-top:6px;">
+            <button class="warn" onclick="laserCmd('clear_alarm')">&#9888;&#65039; Clear Alarm</button>
+            <button class="warn" onclick="laserCmd('reset')">&#128260; Soft Reset</button>
+        </div>
+        <div class="btn-row" style="margin-top:16px;">
             <button class="secondary" onclick="toggleTwitch()" id="btn-twitch">&#9654; Start Twitch</button>
             <button class="secondary" onclick="reconnectLaser()">&#128279; Reconn. Laser</button>
             <button class="secondary" onclick="reconnectTwitch()">&#128279; Reconn. Twitch</button>
@@ -169,6 +250,15 @@
         <div style="display:flex; gap:6px;">
             <input type="text" id="manual-cmd" placeholder="e.g. G0 X10 Y10" onkeydown="if(event.key==='Enter')sendManual()">
             <button onclick="sendManual()" style="white-space:nowrap">Send</button>
+        </div>
+    </div>
+
+
+    <!-- QUEUE / HISTORY -->
+    <div class="card span-2">
+        <h3>Engraving Queue & History</h3>
+        <div id="queue-container">
+            <div id="queue-list">Loading queue...</div>
         </div>
     </div>
 
@@ -250,17 +340,7 @@
         <div id="mp-result" style="margin-top:8px; font-size:0.8rem; color:#adadb8;"></div>
     </div>
 
-    <!-- QUEUE / HISTORY -->
-    <div class="card span-2">
-        <h3>Engraving Queue & History</h3>
-        <!-- Added wrapper to handle scroll independently of the list content -->
-        <div id="queue-container">
-            <div id="queue-list">Loading queue...</div>
-        </div>
-    </div>
-
     <!-- TEXT / FONT SETTINGS -->
-    <!-- Removed span-2 to condense into 1-wide panel -->
     <div class="card">
         <h3>Text &amp; Font Settings</h3>
         <div class="form-grid">
@@ -309,7 +389,6 @@
     </div>
 
     <!-- WORK AREA -->
-    <!-- Removed span-2 to condense into 1-wide panel -->
     <div class="card">
         <h3>Work Area</h3>
         <div class="form-grid">
@@ -357,6 +436,18 @@
         <div class="btn-row">
             <button onclick="saveLaserSettings()">&#128190; Save Settings</button>
             <span class="save-ok" id="laser-ok">&#10003; Saved</span>
+        </div>
+    </div>
+    
+    <!-- SYSTEM ADMIN -->
+    <div class="card">
+        <h3>System Administration</h3>
+        <div class="danger-zone" style="margin-top:0; border-color:#3a3a43;">
+            <p style="color:#adadb8;">Warning: Resetting the board wipes all current placement history.</p>
+            <div class="btn-row" style="margin-top:0;">
+                <button class="danger" style="flex:1;" onclick="resetBoard()">&#128465; Reset Board</button>
+                <button class="warn" style="flex:1;" onclick="restartService()">&#128260; Restart Svc</button>
+            </div>
         </div>
     </div>
 
@@ -409,57 +500,6 @@
         <div id="obs-result" style="margin-top:8px; font-size:0.8rem; color:#adadb8;"></div>
     </div>
 
-
-    <!-- MACHINE & SYSTEM CONTROLS -->
-    <div class="card">
-        <h3>&#9874; Machine &amp; System Controls</h3>
-        
-        <div style="display: flex; gap: 10px; align-items: center; justify-content: center; margin-bottom: 15px; background: #111; padding: 12px 8px; border-radius: 8px; border: 1px solid #2d2d35;">
-            <!-- XY D-Pad -->
-            <div style="display: grid; grid-template-columns: 42px 46px 42px; grid-template-rows: 36px 36px 36px; gap: 4px; text-align: center;">
-                <div></div>
-                <button class="secondary" onclick="jog('Y-')" title="Y- (Up)" style="padding:0; font-weight:bold;">Y-</button>
-                <div></div>
-
-                <button class="secondary" onclick="jog('X-')" title="X- (Left)" style="padding:0; font-weight:bold;">X-</button>
-                <button class="secondary" onclick="homeAxis('XY')" title="Home XY" style="padding:0; font-size:0.75rem; background:#3a3a43; border:1px solid #555;">H-XY</button>
-                <button class="secondary" onclick="jog('X+')" title="X+ (Right)" style="padding:0; font-weight:bold;">X+</button>
-
-                <div></div>
-                <button class="secondary" onclick="jog('Y+')" title="Y+ (Down)" style="padding:0; font-weight:bold;">Y+</button>
-                <div></div>
-            </div>
-
-            <!-- Z Pad -->
-            <div style="display: grid; grid-template-columns: 46px; grid-template-rows: 36px 36px 36px; gap: 4px; text-align: center; margin-left: 5px;">
-                <button class="secondary" onclick="jog('Z+')" title="Z+ (Up)" style="padding:0; font-weight:bold;">Z+</button>
-                <button class="secondary" onclick="homeAxis('Z')" title="Home Z" style="padding:0; font-size:0.75rem; background:#3a3a43; border:1px solid #555;">H-Z</button>
-                <button class="secondary" onclick="jog('Z-')" title="Z- (Down)" style="padding:0; font-weight:bold;">Z-</button>
-            </div>
-
-            <!-- Settings -->
-            <div style="display: flex; flex-direction: column; gap: 6px; width: 55px; margin-left: 5px;">
-                <label style="margin:0; font-size:0.7rem; text-align:center; color:#adadb8;">Step(mm)</label>
-                <input type="number" id="jog-step" value="10" step="0.1" style="text-align:center; padding:6px 2px; font-size: 0.8rem;">
-            </div>
-        </div>
-
-        <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; justify-content: center;">
-            <span style="font-size:0.75rem; color:#adadb8;">Go To:</span>
-            <input type="number" id="abs-x" placeholder="X" style="width:60px; padding:4px;">
-            <input type="number" id="abs-y" placeholder="Y" style="width:60px; padding:4px;">
-            <input type="number" id="abs-z" placeholder="Z" style="width:60px; padding:4px;">
-            <button class="success" style="padding:4px 10px;" onclick="goToAbs()">Go</button>
-        </div>
-
-        <div class="danger-zone" style="padding:10px; margin-top:0;">
-            <div class="btn-row" style="margin-top:0;">
-                <button class="danger" style="flex:1;" onclick="resetBoard()">&#128465; Reset Board</button>
-                <button class="warn" style="flex:1;" onclick="restartService()">&#128260; Restart Svc</button>
-            </div>
-        </div>
-    </div>
-
     <!-- VISUALIZER -->
     <div class="card span-2">
         <h3>Layout Visualizer</h3>
@@ -478,7 +518,7 @@
     </div>
 
     <!-- LOG -->
-    <div class="card">
+    <div class="card span-2">
         <h3>Activity Log</h3>
         <div id="log"></div>
     </div>
@@ -510,9 +550,24 @@ async function updateStatus() {
         setDot('dot-twitch', s.twitch_running);
         setDot('dot-camera', s.camera_running);
         setDot('dot-obs',    s.obs_connected);
+        
+        var stateEl = document.getElementById('machine-state');
+        var stateLower = (s.machine_state || 'unknown').toLowerCase();
+        stateEl.textContent = s.machine_state || 'Offline';
+        stateEl.className = 'state-badge';
+        if (stateLower === 'idle') stateEl.classList.add('idle');
+        else if (stateLower === 'run') stateEl.classList.add('run');
+        else if (stateLower.includes('alarm')) stateEl.classList.add('alarm');
+        
+        if (s.mpos) {
+            document.getElementById('mpos-x').textContent = s.mpos.x.toFixed(3);
+            document.getElementById('mpos-y').textContent = s.mpos.y.toFixed(3);
+            document.getElementById('mpos-z').textContent = s.mpos.z.toFixed(3);
+        }
+        
         document.getElementById('stat-queue').textContent    = s.queue_size;
         document.getElementById('stat-names').textContent    = s.placements;
-        document.getElementById('stat-coverage').textContent = s.coverage + '%';
+        //document.getElementById('stat-coverage').textContent = s.coverage + '%';
         document.getElementById('btn-twitch').innerHTML      = s.twitch_running ? '&#9646;&#9646; Stop Twitch' : '&#9654; Start Twitch';
 
         if (!window._settingsLoaded && s.config) {
@@ -563,7 +618,14 @@ async function loadFonts() {
 
 // LASER CONTROLS
 async function laserCmd(action) {
-    var ep = {home:'/api/laser_home', unlock:'/api/laser_unlock', stop:'/api/laser_stop'};
+    var ep = {
+        home:   '/api/laser_home', 
+        unlock: '/api/laser_unlock', 
+        stop:   '/api/laser_stop',
+        reset:  '/api/laser_reset',
+        resume: '/api/laser_resume',
+        clear_alarm: '/api/laser_clear_alarm'
+    };
     var r  = await api(ep[action], 'POST');
     log(action + ': ' + (r.message || (r.success ? 'OK' : 'Failed')), r.success ? '#00c853' : '#e91916');
 }
@@ -980,8 +1042,9 @@ window.addEventListener('DOMContentLoaded',async function(){
     await loadOBSSettings();
     await updateStatus();
     await updateQueue();
-    setInterval(updateStatus,3000);
-    setInterval(updateQueue,2000); // Updated to poll history more frequently, safe since JSON check prevents rewrite
+    // Update live status much faster (1 second instead of 3) for live coordinates!
+    setInterval(updateStatus, 1000);
+    setInterval(updateQueue, 2000); // Updated to poll history more frequently, safe since JSON check prevents rewrite
     setInterval(drawVisualizer,12000);
 });
 </script>
