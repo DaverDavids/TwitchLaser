@@ -81,7 +81,7 @@ def _quad_to_arc_or_lines_machine(p0, cp, p3, feed):
     Fit a G2/G3 arc to a quadratic Bezier in machine coordinates.
     """
     MIN_RADIUS  = 0.05
-    MAX_ARC_ERR = 0.15  # Loosened to prevent excessive subdividing
+    MAX_ARC_ERR = 1.15  # Loosened to prevent excessive subdividing
 
     seg_len = math.hypot(p3[0]-p0[0], p3[1]-p0[1])
     
@@ -118,7 +118,7 @@ def _cubic_to_arc_or_lines_machine(p0, p1, p2, p3, feed):
     Fit a G2/G3 arc to a cubic Bezier given in machine coordinates.
     """
     MIN_RADIUS  = 0.05
-    MAX_ARC_ERR = 0.15  # Loosened to prevent excessive subdividing
+    MAX_ARC_ERR = 1.15  # Loosened to prevent excessive subdividing
 
     seg_len = math.hypot(p3[0]-p0[0], p3[1]-p0[1])
     
