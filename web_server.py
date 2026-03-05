@@ -44,8 +44,14 @@ def index():
 def get_status():
     stats = layout.get_statistics() if layout else {}
     pending_count = len([j for j in job_mgr.get_jobs() if j['status'] == 'pending']) if job_mgr else 0
+    
+    mpos = laser.mpos if laser else {'x': 0.0, 'y': 0.0, 'z': 0.0}
+    state = laser.machine_state if laser else 'Offline'
+    
     return jsonify({
         'laser_connected': laser.connected if laser else False,
+        'machine_state':   state,
+        'mpos':            mpos,
         'twitch_running':  twitch.is_running() if twitch else False,
         'camera_running':  camera.is_running() if camera else False,
         'obs_connected':   obs_ctrl.is_connected() if obs_ctrl else False,
@@ -151,6 +157,18 @@ def laser_home():
 @app.route('/api/laser_unlock',    methods=['POST'])
 def laser_unlock():
     s, r = laser.unlock();    return jsonify({'success': s, 'message': r})
+
+@app.route('/api/laser_clear_alarm', methods=['POST'])
+def laser_clear_alarm():
+    s, r = laser.clear_alarm(); return jsonify({'success': s, 'message': r})
+
+@app.route('/api/laser_reset', methods=['POST'])
+def laser_reset():
+    s, r = laser.reset(); return jsonify({'success': s, 'message': r})
+
+@app.route('/api/laser_resume', methods=['POST'])
+def laser_resume():
+    s, r = laser.resume(); return jsonify({'success': s, 'message': r})
 
 @app.route('/api/laser_stop',      methods=['POST'])
 def laser_stop():
