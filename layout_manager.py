@@ -116,7 +116,7 @@ class LayoutManager:
 
     # ── Space finder ──────────────────────────────────────────
 
-    def find_empty_space(self, required_width, required_height, text_height):
+    def find_empty_space(self, required_width, required_height, text_height, min_text_height=None):
         """
         Find a free rectangle for a name of the given bounding-box size.
 
@@ -132,12 +132,18 @@ class LayoutManager:
              recurse.
           4. Return (x_local, y_local, final_text_height) or None.
         """
+        from config import config as _cfg
+        if min_text_height is None:
+            min_text_height = float(_cfg.get('text_settings.min_height_mm', 2.0))
+
         grid_size  = 2.0   # mm
-        min_height = 2.0   # mm — absolute floor
+        min_height = min_text_height   # absolute floor from UI settings
 
         # Step 1: force-fit width
         while required_width > self.width_mm and text_height > min_height:
             new_h  = max(text_height * 0.8, min_height)
+            if new_h == text_height:
+                break
             scale  = new_h / text_height
             required_width  *= scale
             required_height *= scale
@@ -145,7 +151,7 @@ class LayoutManager:
             debug_print(f'Name too wide, shrinking to {text_height:.1f} mm')
 
         if required_width > self.width_mm:
-            debug_print('Cannot fit name even at minimum height.')
+            debug_print('Cannot fit name even at minimum height (exceeds total board width).')
             return None
 
         # Step 2: collect valid positions, then weighted-random pick
@@ -204,13 +210,15 @@ class LayoutManager:
         # Step 3: shrink and recurse
         if text_height > min_height:
             new_h  = max(text_height * 0.8, min_height)
-            scale  = new_h / text_height
-            debug_print(f'No space at {text_height:.1f} mm, trying {new_h:.1f} mm')
-            return self.find_empty_space(
-                required_width  * scale,
-                required_height * scale,
-                new_h,
-            )
+            if new_h < text_height:
+                scale  = new_h / text_height
+                debug_print(f'No space at {text_height:.1f} mm, trying {new_h:.1f} mm')
+                return self.find_empty_space(
+                    required_width  * scale,
+                    required_height * scale,
+                    new_h,
+                    min_text_height
+                )
 
         return None
 
