@@ -20,6 +20,9 @@
         .dot.warn { background: #ffa000; box-shadow: 0 0 6px #ffa000; }
         .badge { display: inline-block; background: #2d2d35; border-radius: 4px; padding: 2px 8px; font-size: 0.78rem; font-family: monospace; }
         .stat-group { display: flex; gap: 12px; border-left: 1px solid #3a3a43; padding-left: 16px; margin-left: 4px; }
+        .status-col { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+        .header-btn { background: #3a3a43; border: none; border-radius: 4px; color: #efeff1; font-size: 0.65rem; padding: 2px 6px; cursor: pointer; text-transform: uppercase; letter-spacing: 0.5px;}
+        .header-btn:hover { background: #464650; }
         .state-badge { display: inline-block; background: #2d2d35; border-radius: 4px; padding: 2px 8px; font-size: 0.78rem; font-weight: bold; font-family: monospace; letter-spacing: 0.5px; }
         .state-badge.idle { color: #00c853; }
         .state-badge.run { color: #9147ff; }
@@ -159,10 +162,24 @@
     </h1>
     
     <div class="status-row">
-        <div class="status-item"><span class="dot" id="dot-laser"></span> Laser</div>
-        <div class="status-item"><span class="dot" id="dot-twitch"></span> Twitch</div>
-        <div class="status-item"><span class="dot" id="dot-camera"></span> Camera</div>
-        <div class="status-item"><span class="dot" id="dot-obs"></span> OBS</div>
+        <div class="status-col">
+            <div class="status-item"><span class="dot" id="dot-laser"></span> Laser</div>
+            <button class="header-btn" onclick="reconnectLaser()">Reconnect</button>
+        </div>
+        <div class="status-col">
+            <div class="status-item"><span class="dot" id="dot-twitch"></span> Twitch</div>
+            <div style="display:flex; gap:4px;">
+                <button class="header-btn" onclick="toggleTwitch()" id="btn-twitch">&#9654; Start</button>
+                <button class="header-btn" onclick="reconnectTwitch()">Reconn</button>
+            </div>
+        </div>
+        <div class="status-col">
+            <div class="status-item"><span class="dot" id="dot-camera"></span> Camera</div>
+        </div>
+        <div class="status-col">
+            <div class="status-item"><span class="dot" id="dot-obs"></span> OBS</div>
+            <button class="header-btn" onclick="reconnectOBS()">Reconnect</button>
+        </div>
         
         <div class="stat-group">
             <div class="status-item">State: <span class="state-badge" id="machine-state">UNKNOWN</span></div>
@@ -240,11 +257,6 @@
         <div class="btn-row" style="margin-top:6px;">
             <button class="warn" onclick="laserCmd('clear_alarm')">&#9888;&#65039; Clear Alarm</button>
             <button class="warn" onclick="laserCmd('reset')">&#128260; Soft Reset</button>
-        </div>
-        <div class="btn-row" style="margin-top:16px;">
-            <button class="secondary" onclick="toggleTwitch()" id="btn-twitch">&#9654; Start Twitch</button>
-            <button class="secondary" onclick="reconnectLaser()">&#128279; Reconn. Laser</button>
-            <button class="secondary" onclick="reconnectTwitch()">&#128279; Reconn. Twitch</button>
         </div>
         <label style="margin-top:14px;">Manual G-code</label>
         <div style="display:flex; gap:6px;">
@@ -492,7 +504,6 @@
 
         <div class="btn-row">
             <button onclick="saveOBSSettings()">&#128190; Save OBS</button>
-            <button class="secondary" onclick="reconnectOBS()">&#128279; Reconnect</button>
             <button class="secondary" onclick="testOBS('start')">&#9654; Test Start</button>
             <button class="secondary" onclick="testOBS('finish')">&#9646;&#9646; Test Finish</button>
             <span class="save-ok" id="obs-ok">&#10003; Saved</span>
@@ -568,7 +579,7 @@ async function updateStatus() {
         document.getElementById('stat-queue').textContent    = s.queue_size;
         document.getElementById('stat-names').textContent    = s.placements;
         //document.getElementById('stat-coverage').textContent = s.coverage + '%';
-        document.getElementById('btn-twitch').innerHTML      = s.twitch_running ? '&#9646;&#9646; Stop Twitch' : '&#9654; Start Twitch';
+        document.getElementById('btn-twitch').innerHTML      = s.twitch_running ? '&#9646;&#9646; Stop' : '&#9654; Start';
 
         if (!window._settingsLoaded && s.config) {
             var ls  = s.config.laser_settings || {};
