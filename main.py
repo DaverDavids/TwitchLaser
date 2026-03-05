@@ -127,11 +127,10 @@ def process_queue(laser, layout, gcode_gen, obs):
                         target_w = width * (final_height / text_height)
 
                 if not position:
-                    debug_print(f"No space for '{name}' — requeueing")
+                    debug_print(f"No space for '{name}' — board full")
                     with queue_lock:
-                        job_mgr.update_job(job['id'], status='pending')
+                        job_mgr.update_job(job['id'], status='failed', error='Board is full! Reset board and click Redo.')
                     processing = False
-                    time.sleep(5)
                     continue
 
                 x_local, y_local, final_height = position
