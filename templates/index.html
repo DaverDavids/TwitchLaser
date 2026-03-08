@@ -295,7 +295,7 @@
         <h3>&#128247; Camera Preview</h3>
         <div class="camera-container" id="camera-container">
             <div class="camera-placeholder" id="camera-placeholder">
-                Loading stream...<br><span style="font-size: 0.75rem;">(Using port 8081 ustreamer)</span>
+                Loading stream...<br><span style="font-size: 0.75rem;">(Using port 8080 ustreamer)</span>
             </div>
             <!-- Default to trying the ustreamer port! -->
             <img id="camera-stream" src="" style="display: none;" onerror="handleCameraError()">
@@ -689,15 +689,15 @@ function setVal(id, v)  { var el = document.getElementById(id); if (el) el.value
 function handleCameraError() {
     document.getElementById('camera-stream').style.display = 'none';
     document.getElementById('camera-placeholder').style.display = 'block';
-    document.getElementById('camera-placeholder').innerHTML = 'Camera stream failed.<br><span style="font-size: 0.75rem;">Is ustreamer running on port 8081?</span>';
+    document.getElementById('camera-placeholder').innerHTML = 'Camera stream failed.<br><span style="font-size: 0.75rem;">Is ustreamer running on port 8080?</span>';
 }
 
 function reloadCamera() {
     var img = document.getElementById('camera-stream');
     document.getElementById('camera-placeholder').style.display = 'none';
     img.style.display = 'block';
-    // Change host to the same hostname but port 8081 for ustreamer instead of the local flask app!
-    img.src = window.location.protocol + '//' + window.location.hostname + ':8081/stream';
+    // Change host to the same hostname but port 8080 for ustreamer instead of the local flask app!
+    img.src = window.location.protocol + '//' + window.location.hostname + ':8080/stream';
 }
 
 // FONT DROPDOWN
