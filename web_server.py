@@ -5,11 +5,16 @@ Web Server - Flask-based web interface for TwitchLaser
 import os
 import subprocess
 import threading
+import logging
 
 from flask import Flask, render_template, request, jsonify, Response
 
 from config import config, debug_print
 from gcode_generator import FONT_PROFILES
+
+# Disable Flask/Werkzeug HTTP GET logging to prevent log spam
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
 
 app = Flask(__name__)
 
