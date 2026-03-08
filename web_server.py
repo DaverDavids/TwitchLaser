@@ -395,11 +395,32 @@ def restart_service():
 
 
 # ── Twitch / Queue / Jobs ────────────────────────────────────────────
+@app.route('/api/twitch_config', methods=['GET', 'POST'])
+def twitch_config():
+    if request.method == 'POST':
+        data = request.json or {}
+        config.set('twitch', data)
+        if twitch:
+            # Re-read configuration on next loop
+            if data.get('enabled', True):
+                if not twitch.is_running():
+                    twitch.start()
+                else:
+                    twitch.reconnect()
+            else:
+                twitch.stop()
+        return jsonify({'success': True})
+    return jsonify(config.get('twitch', {}))
+
 @app.route('/api/twitch_toggle', methods=['POST'])
 def toggle_twitch():
     if twitch.is_running():
         twitch.stop()
+        # Ensure it saves to config so it doesn't auto-start on next reboot
+        config.set('twitch.enabled', False)
         return jsonify({'success': True, 'running': False})
+    
+    config.set('twitch.enabled', True)
     success = twitch.start()
     return jsonify({'success': success, 'running': success})
 
