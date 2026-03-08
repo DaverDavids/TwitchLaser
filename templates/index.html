@@ -54,7 +54,7 @@
 
         .btn-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 
-        input[type="text"], input[type="number"], select, textarea {
+        input[type="text"], input[type="number"], input[type="password"], select, textarea {
             background: #0e0e10; border: 1px solid #3a3a43; border-radius: 6px;
             color: #efeff1; padding: 7px 10px; font-size: 0.85rem; width: 100%;
         }
@@ -463,6 +463,39 @@
         </div>
     </div>
 
+    <!-- TWITCH SETTINGS -->
+    <div class="card span-2">
+        <h3>&#128250; Twitch Integration</h3>
+        <p style="font-size:0.78rem; color:#adadb8; margin-bottom:12px;">
+            Connects to Twitch Chat via IRC to listen for live subscription events natively.
+        </p>
+        <div class="form-grid">
+            <div>
+                <label>Enabled</label>
+                <select id="tw-enabled">
+                    <option value="false">Disabled</option>
+                    <option value="true">Enabled</option>
+                </select>
+            </div>
+            <div>
+                <label>Channel to Watch</label>
+                <input type="text" id="tw-channel" placeholder="e.g. daverdavids">
+            </div>
+            <div>
+                <label>Bot Username (Optional)</label>
+                <input type="text" id="tw-username" placeholder="Leave blank for anon">
+            </div>
+            <div>
+                <label>OAuth Token (Optional)</label>
+                <input type="password" id="tw-oauth" placeholder="oauth:123456789">
+            </div>
+        </div>
+        <div class="btn-row">
+            <button onclick="saveTwitchSettings()">&#128190; Save & Reconnect</button>
+            <span class="save-ok" id="twitch-ok">&#10003; Saved</span>
+        </div>
+    </div>
+
     <!-- OBS SETTINGS -->
     <div class="card span-2">
         <h3>&#127909; OBS WebSocket Integration</h3>
@@ -646,6 +679,28 @@ async function sendManual() {
     var r = await api('/api/laser_command', 'POST', {command: cmd});
     log('> ' + cmd + '  ->  ' + (r.response || ''), r.success ? '#efeff1' : '#e91916');
     document.getElementById('manual-cmd').value = '';
+}
+
+// TWITCH CONTROLS
+async function loadTwitchSettings() {
+    try {
+        var d = await api('/api/twitch_config');
+        setVal('tw-enabled',  d.enabled !== false ? 'true' : 'false');
+        setVal('tw-channel',  d.channel || '');
+        setVal('tw-username', d.username || '');
+        setVal('tw-oauth',    d.oauth_token || '');
+    } catch(e) {}
+}
+async function saveTwitchSettings() {
+    var body = {
+        enabled:     document.getElementById('tw-enabled').value === 'true',
+        channel:     document.getElementById('tw-channel').value.trim(),
+        username:    document.getElementById('tw-username').value.trim(),
+        oauth_token: document.getElementById('tw-oauth').value.trim()
+    };
+    var r = await api('/api/twitch_config', 'POST', body);
+    if (r.success) { flashOk('twitch-ok'); log('Twitch settings saved', '#00c853'); }
+    else log('Twitch save failed: ' + r.message, '#e91916');
 }
 async function toggleTwitch() {
     var r = await api('/api/twitch_toggle', 'POST');
@@ -1051,6 +1106,7 @@ window.addEventListener('DOMContentLoaded',async function(){
     await loadFonts();
     await loadWorkArea();
     await loadOBSSettings();
+    await loadTwitchSettings();
     await updateStatus();
     await updateQueue();
     // Update live status much faster (1 second instead of 3) for live coordinates!
