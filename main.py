@@ -10,7 +10,18 @@ import os
 import signal
 import threading
 
-from config import config, debug_print
+# Force unbuffered output so systemd/journalctl gets logs immediately
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(line_buffering=True)
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(line_buffering=True)
+
+try:
+    from config import config, debug_print
+except ImportError:
+    print("FATAL: config.py not found. Please rename config.py.template to config.py")
+    sys.exit(1)
+    
 from laser_controller import LaserController
 from layout_manager import LayoutManager
 from gcode_generator import GCodeGenerator, FONT_PROFILES
