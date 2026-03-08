@@ -392,11 +392,15 @@ def reset_board():
 # ── Restart service ───────────────────────────────────────────
 @app.route('/api/restart_service', methods=['POST'])
 def restart_service():
-    try:
-        subprocess.Popen(['sudo', 'systemctl', 'restart', 'twitchlaser'])
-        return jsonify({'success': True, 'message': 'Service restarting…'})
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e)})
+    # Use a background thread so we can return the HTTP response before the server is killed
+    def restart_task():
+        import time
+        time.sleep(1)
+        # Using a direct systemctl call with fully qualified path
+        subprocess.Popen(['sudo', '/bin/systemctl', 'restart', 'twitchlaser'])
+    
+    threading.Thread(target=restart_task, daemon=True).start()
+    return jsonify({'success': True, 'message': 'Service restarting…'})
 
 
 # ── Twitch / Queue / Jobs ────────────────────────────────────────────
@@ -524,4 +528,5 @@ def video_feed():
 
 
 def run_server(host='0.0.0.0', port=5000):
-    app.run(host=host, port=port, debug=False, threaded=True)
+    # Disable the reloader so it doesn't spawn an extra subprocess
+    app.run(host=host, port=port, debug=False, threaded=True, use_reloader=False)
