@@ -72,7 +72,12 @@ class Config:
                 'bold_pattern':      'cross',
                 'mirror_y':          False
             },
-            'twitch_enabled':     True,
+            'twitch': {
+                'enabled': True,
+                'channel': '',
+                'username': '',
+                'oauth_token': ''
+            },
             'camera_enabled':     True,
             'fluidnc_connection': 'network',
             'serial_port':        '/dev/ttyUSB0',
