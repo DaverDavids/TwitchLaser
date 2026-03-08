@@ -41,6 +41,14 @@ class CameraStream:
         """Helper to try opening a specific camera index or path explicitly with V4L2 to prevent GStreamer lockups"""
         debug_print(f"Testing camera {index_or_path}...")
         
+        # If the user passed in a string like '/dev/video1', we still need to strip it to an int
+        # because the V4L2 backend ONLY accepts integer indices. 
+        if isinstance(index_or_path, str) and index_or_path.startswith('/dev/video'):
+            try:
+                index_or_path = int(index_or_path.replace('/dev/video', ''))
+            except ValueError:
+                pass # Fall back to letting OpenCV handle it
+
         # Try explicitly with V4L2 to prevent OpenCV from falling back to GStreamer 
         # which can crash or leave the video node in a busy state.
         cam = cv2.VideoCapture(index_or_path, cv2.CAP_V4L2)
@@ -117,7 +125,7 @@ class CameraStream:
                 ret, frame = self.camera.read()
 
                 if ret:
-                    con:s_failures = 0
+                    consecutive_failures = 0
                     with self.lock:
                         self.frame = frame
                 else:
