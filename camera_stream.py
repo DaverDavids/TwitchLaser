@@ -18,6 +18,27 @@ class CameraStream:
         self.thread = None
         self.lock = threading.Lock()
 
+    def _try_open_camera(self, index):
+        """Helper to try opening a specific camera index"""
+        debug_print(f"Testing camera index {index}...")
+        
+        # Try V4L2 first
+        cam = cv2.VideoCapture(index, cv2.CAP_V4L2)
+        if not cam.isOpened():
+            # Try default backend
+            cam = cv2.VideoCapture(index)
+            
+        if not cam.isOpened():
+            return None
+            
+        # Verify it actually returns frames (some Pi hardware devices open but return no video)
+        ret, _ = cam.read()
+        if not ret:
+            cam.release()
+            return None
+            
+        return cam
+
     def start(self):
         """Start camera capture"""
         if self.running:
@@ -25,16 +46,24 @@ class CameraStream:
             return True
 
         try:
-            debug_print(f"Attempting to open camera {self.camera_index} (V4L2)...")
-            # Explicitly use V4L2 on Linux/Pi, it handles USB webcams much better
-            self.camera = cv2.VideoCapture(self.camera_index, cv2.CAP_V4L2)
-
-            if not self.camera.isOpened():
-                debug_print(f"Failed to open camera {self.camera_index} using V4L2, falling back to ANY...")
-                self.camera = cv2.VideoCapture(self.camera_index)
-                if not self.camera.isOpened():
-                    debug_print(f"Failed to open camera {self.camera_index} entirely. Check /dev/video{self.camera_index} permissions.")
-                    return False
+            # 1. Try the configured index first
+            self.camera = self._try_open_camera(self.camera_index)
+            
+            # 2. If it fails, auto-scan indices 0 through 10 (Pi often has hardware nodes at 0-2)
+            if self.camera is None:
+                debug_print(f"Failed to open configured camera {self.camera_index}. Auto-scanning for working camera...")
+                for i in range(10):
+                    if i == self.camera_index:
+                        continue
+                    self.camera = self._try_open_camera(i)
+                    if self.camera is not None:
+                        debug_print(f"Successfully found working camera at index {i}!")
+                        self.camera_index = i  # Update to the working index
+                        break
+                        
+            if self.camera is None:
+                debug_print("Failed to find any working cameras entirely. Check /dev/video* permissions or physical connection.")
+                return False
 
             # Request MJPG format from the camera if available, drastically improves FPS on Pi USB
             self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
