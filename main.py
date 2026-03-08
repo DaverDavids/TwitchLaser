@@ -7,6 +7,7 @@ Main application entry point
 import sys
 import time
 import os
+import signal
 import threading
 
 from config import config, debug_print
@@ -17,8 +18,12 @@ from twitch_monitor import TwitchMonitor
 from obs_controller import OBSController
 from job_manager import JobManager
 
-CAMERA_AVAILABLE = False
-CameraStream = None
+try:
+    from camera_stream import CameraStream
+    CAMERA_AVAILABLE = True
+except ImportError:
+    CAMERA_AVAILABLE = False
+    CameraStream = None
 
 from web_server import init_web_server, run_server
 
@@ -268,7 +273,15 @@ def main():
         else:
             print('WARNING: Twitch monitor failed to start')
 
+    # ── Camera stream ────────────────────────────────────
     camera = None
+    if CAMERA_AVAILABLE:
+        print('Starting camera stream...')
+        camera = CameraStream()
+        if camera.start():
+            print('Camera started')
+        else:
+            print('WARNING: Camera failed to start')
 
     # ── Queue processor thread ─────────────────────────────
     print('Starting queue processor...')
@@ -278,6 +291,19 @@ def main():
         daemon=True,
     )
     queue_thread.start()
+
+    # ── Handle Graceful Exit for Systemd ───────────────────
+    def sigterm_handler(signum, frame):
+        print('\nSIGTERM received, shutting down gracefully...')
+        if twitch: twitch.stop()
+        if laser:  laser.disconnect()
+        if camera: camera.stop()
+        print('Goodbye!')
+        # Force exit to ensure we don't hang on background threads
+        os._exit(0)
+
+    signal.signal(signal.SIGTERM, sigterm_handler)
+    signal.signal(signal.SIGINT, sigterm_handler)
 
     # ── Web server ─────────────────────────────────────────
     print('Starting web server...')
@@ -290,15 +316,9 @@ def main():
     print(f'               http://localhost:{port}')
     print(f'{"=" * 50}\n')
 
-    try:
-        run_server(host='0.0.0.0', port=port)
-    except KeyboardInterrupt:
-        print('\nShutting down...')
-        if twitch: twitch.stop()
-        if laser:  laser.disconnect()
-        print('Goodbye!')
-        sys.exit(0)
-
+    # Flask's app.run handles KeyboardInterrupt itself mostly, but our signal
+    # handler will catch it and force an os._exit(0) cleanly.
+    run_server(host='0.0.0.0', port=port)
 
 if __name__ == '__main__':
     main()
