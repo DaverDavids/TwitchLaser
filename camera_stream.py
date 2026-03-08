@@ -4,11 +4,20 @@ Camera Stream - USB webcam streaming with MJPEG
 import cv2
 import threading
 import time
+import os
 from config import debug_print
 
 class CameraStream:
-    def __init__(self, camera_index=0, width=640, height=480, fps=15):
-        self.camera_index = camera_index
+    def __init__(self, camera_index=None, width=640, height=480, fps=15):
+        # Default to the udev symlink if no index provided and the symlink exists
+        if camera_index is None:
+            if os.path.exists('/dev/webcam0'):
+                self.camera_index = '/dev/webcam0'
+            else:
+                self.camera_index = 0
+        else:
+            self.camera_index = camera_index
+            
         self.width = width
         self.height = height
         self.fps = fps
@@ -18,15 +27,15 @@ class CameraStream:
         self.thread = None
         self.lock = threading.Lock()
 
-    def _try_open_camera(self, index):
-        """Helper to try opening a specific camera index"""
-        debug_print(f"Testing camera index {index}...")
+    def _try_open_camera(self, index_or_path):
+        """Helper to try opening a specific camera index or path"""
+        debug_print(f"Testing camera {index_or_path}...")
         
         # Try V4L2 first
-        cam = cv2.VideoCapture(index, cv2.CAP_V4L2)
+        cam = cv2.VideoCapture(index_or_path, cv2.CAP_V4L2)
         if not cam.isOpened():
             # Try default backend
-            cam = cv2.VideoCapture(index)
+            cam = cv2.VideoCapture(index_or_path)
             
         if not cam.isOpened():
             return None
@@ -46,14 +55,14 @@ class CameraStream:
             return True
 
         try:
-            # 1. Try the configured index first
+            # 1. Try the configured index/path first (e.g. /dev/webcam0)
             self.camera = self._try_open_camera(self.camera_index)
             
-            # 2. If it fails, auto-scan indices 0 through 10 (Pi often has hardware nodes at 0-2)
+            # 2. If it fails, auto-scan indices 0 through 10 as fallback
             if self.camera is None:
                 debug_print(f"Failed to open configured camera {self.camera_index}. Auto-scanning for working camera...")
                 for i in range(10):
-                    if i == self.camera_index:
+                    if i == self.camera_index: # Skip if we already tried this exact integer
                         continue
                     self.camera = self._try_open_camera(i)
                     if self.camera is not None:
