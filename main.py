@@ -29,10 +29,13 @@ from twitch_monitor import TwitchMonitor
 from obs_controller import OBSController
 from job_manager import JobManager
 
+# Wrap camera in a broad try/except so if OpenCV or Numpy breaks, 
+# the whole app doesn't crash. It just gracefully disables the camera.
 try:
     from camera_stream import CameraStream
     CAMERA_AVAILABLE = True
-except ImportError:
+except Exception as e:
+    print(f"WARNING: Camera module failed to load ({e}). Running without camera.")
     CAMERA_AVAILABLE = False
     CameraStream = None
 
