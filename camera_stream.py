@@ -28,14 +28,12 @@ class CameraStream:
         self.lock = threading.Lock()
 
     def _try_open_camera(self, index_or_path):
-        """Helper to try opening a specific camera index or path"""
+        """Helper to try opening a specific camera index or path explicitly with V4L2 to prevent GStreamer lockups"""
         debug_print(f"Testing camera {index_or_path}...")
         
-        # Try V4L2 first
+        # Try explicitly with V4L2 to prevent OpenCV from falling back to GStreamer 
+        # which can crash or leave the video node in a busy state.
         cam = cv2.VideoCapture(index_or_path, cv2.CAP_V4L2)
-        if not cam.isOpened():
-            # Try default backend
-            cam = cv2.VideoCapture(index_or_path)
             
         if not cam.isOpened():
             return None
