@@ -1,175 +1,169 @@
 """
-Twitch Monitor - Watches for subscriptions and triggers engraving
+Twitch Monitor - Watches for subscriptions via Twitch IRC and triggers engraving
 """
 import threading
 import time
-import requests
-from config import debug_print
+import socket
+from config import config, debug_print
 
 class TwitchMonitor:
     def __init__(self, enqueue_callback):
         self.enqueue_callback = enqueue_callback
         self.running = False
         self.thread = None
-        self.access_token = None
         self._reconnect_requested = False
+        self.sock = None
 
-        try:
-            import secrets
-            self.client_id     = secrets.TWITCH_CLIENT_ID
-            self.client_secret = secrets.TWITCH_CLIENT_SECRET
-            self.channel_name  = secrets.TWITCH_CHANNEL_NAME
-        except Exception as e:
-            debug_print(f"Error loading Twitch credentials: {e}")
-            self.client_id = None
+    def _parse_tags(self, tags_str):
+        tags = {}
+        for part in tags_str.split(';'):
+            if '=' in part:
+                k, v = part.split('=', 1)
+                tags[k] = v
+        return tags
 
-    # ── Auth ──────────────────────────────────────────────────
-    def get_access_token(self):
-        if not self.client_id:
-            return False
-        try:
-            r = requests.post(
-                "https://id.twitch.tv/oauth2/token",
-                params={
-                    'client_id':     self.client_id,
-                    'client_secret': self.client_secret,
-                    'grant_type':    'client_credentials',
-                },
-                timeout=10,
-            )
-            if r.status_code == 200:
-                self.access_token = r.json()['access_token']
-                debug_print("Got Twitch access token")
-                return True
-            debug_print(f"Failed to get token: {r.status_code}")
-            return False
-        except Exception as e:
-            debug_print(f"Token request error: {e}")
-            return False
-
-    def get_user_id(self):
-        if not self.access_token:
-            if not self.get_access_token():
-                return None
-        try:
-            r = requests.get(
-                "https://api.twitch.tv/helix/users",
-                headers={'Client-ID': self.client_id,
-                         'Authorization': f'Bearer {self.access_token}'},
-                params={'login': self.channel_name},
-                timeout=10,
-            )
-            if r.status_code == 200:
-                data = r.json().get('data', [])
-                if data:
-                    uid = data[0]['id']
-                    debug_print(f"Channel ID: {uid}")
-                    return uid
-            debug_print(f"Failed to get user ID: {r.status_code}")
-            return None
-        except Exception as e:
-            debug_print(f"User ID request error: {e}")
-            return None
-
-    def check_subscriptions(self, user_id, last_check_time):
-        if not self.access_token:
-            return []
-        try:
-            r = requests.get(
-                "https://api.twitch.tv/helix/subscriptions",
-                headers={'Client-ID': self.client_id,
-                         'Authorization': f'Bearer {self.access_token}'},
-                params={'broadcaster_id': user_id, 'first': 100},
-                timeout=10,
-            )
-            if r.status_code == 401:
-                debug_print("Token expired, refreshing...")
-                if self.get_access_token():
-                    return self.check_subscriptions(user_id, last_check_time)
-                return []
-            if r.status_code == 200:
-                return [s.get('user_name', 'Unknown') for s in r.json().get('data', [])]
-            debug_print(f"Subscription check failed: {r.status_code}")
-            return []
-        except Exception as e:
-            debug_print(f"Subscription check error: {e}")
-            return []
-
-    # ── Monitor loop with auto-reconnect ─────────────────────
     def monitor_loop(self):
-        debug_print("Twitch monitor started")
-        user_id        = None
-        last_check     = 0
-        check_interval = 30
-        seen_subs      = set()
-        backoff        = 5   # seconds between reconnect attempts
-
+        debug_print("Twitch monitor thread started")
+        
         while self.running:
-            # (Re)connect when user_id is missing or reconnect was requested
-            if user_id is None or self._reconnect_requested:
-                self._reconnect_requested = False
-                debug_print("Twitch: (re)connecting...")
-                self.access_token = None
-                user_id = self.get_user_id()
-                if not user_id:
-                    debug_print(f"Twitch: failed to get user ID, retrying in {backoff}s")
-                    time.sleep(backoff)
-                    backoff = min(backoff * 2, 120)  # exponential back-off, cap 2 min
-                    continue
-                backoff = 5  # reset on success
-                debug_print("Twitch: connected")
+            tw_cfg = config.get('twitch', {})
+            channel = tw_cfg.get('channel', '').strip().lower()
+            username = tw_cfg.get('username', '').strip().lower()
+            oauth = tw_cfg.get('oauth_token', '').strip()
+            
+            if not channel:
+                debug_print("Twitch IRC: No channel configured. Waiting 10s...")
+                time.sleep(10)
+                continue
 
+            # Fallback to anonymous if credentials aren't fully provided
+            if not username or not oauth:
+                username = f"justinfan{int(time.time())}"
+                oauth = "SCHMOOPIIE"
+            elif not oauth.startswith('oauth:'):
+                oauth = f"oauth:{oauth}"
+                
+            if channel.startswith('#'):
+                channel = channel[1:]
+
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.sock.settimeout(300) # 5 minutes timeout for PINGs
+            
             try:
-                if time.time() - last_check >= check_interval:
-                    subs = self.check_subscriptions(user_id, last_check)
-                    for sub_name in subs:
-                        if sub_name not in seen_subs:
-                            debug_print(f"New subscriber: {sub_name}")
-                            seen_subs.add(sub_name)
-                            if self.enqueue_callback:
-                                self.enqueue_callback(sub_name, 'subscription')
-                    last_check = time.time()
+                debug_print(f"Twitch IRC: Connecting to #{channel} as {username}...")
+                self.sock.connect(('irc.chat.twitch.tv', 6667))
+                
+                self.sock.send(f"PASS {oauth}\r\n".encode('utf-8'))
+                self.sock.send(f"NICK {username}\r\n".encode('utf-8'))
+                self.sock.send(f"CAP REQ :twitch.tv/tags twitch.tv/commands\r\n".encode('utf-8'))
+                self.sock.send(f"JOIN #{channel}\r\n".encode('utf-8'))
+                
+                debug_print("Twitch IRC: Connected and joined!")
+                self._reconnect_requested = False
+                
+                buffer = ""
+                while self.running and not self._reconnect_requested:
+                    try:
+                        data = self.sock.recv(4096)
+                        if not data:
+                            break # Disconnected
+                        buffer += data.decode('utf-8', errors='replace')
+                    except socket.timeout:
+                        debug_print("Twitch IRC: Socket timeout (no PING received). Reconnecting.")
+                        break
+                    
+                    lines = buffer.split('\r\n')
+                    buffer = lines.pop() # Keep incomplete line for next loop
+                    
+                    for line in lines:
+                        if line.startswith('PING'):
+                            self.sock.send(f"PONG {line.split()[1]}\r\n".encode('utf-8'))
+                            continue
+                            
+                        # Parse USERNOTICE (Subscription events)
+                        if 'USERNOTICE' in line:
+                            # Format: @tags... :tmi.twitch.tv USERNOTICE #channel :Message
+                            if line.startswith('@'):
+                                parts = line.split(' ', 2)
+                                tags_str = parts[0][1:] # Remove leading @
+                                tags = self._parse_tags(tags_str)
+                                
+                                msg_id = tags.get('msg-id')
+                                
+                                # Standard sub or resub
+                                if msg_id in ('sub', 'resub'):
+                                    user = tags.get('display-name', 'Unknown')
+                                    debug_print(f"Twitch IRC: Sub/Resub detected -> {user}")
+                                    if self.enqueue_callback:
+                                        self.enqueue_callback(user, 'Subscription')
+                                        
+                                # Single gift sub recipient (fires individually for every gift in a bomb)
+                                elif msg_id == 'subgift':
+                                    recipient = tags.get('msg-param-recipient-display-name')
+                                    if recipient:
+                                        debug_print(f"Twitch IRC: Gift sub received by -> {recipient}")
+                                        if self.enqueue_callback:
+                                            self.enqueue_callback(recipient, 'Gifted Sub')
+                                            
+                                # Bulk gift summary event (Ignore this! The 'subgift' handles individual recipients)
+                                elif msg_id == 'submysterygift':
+                                    gifter = tags.get('display-name', 'Unknown')
+                                    count = tags.get('msg-param-mass-gift-count', '0')
+                                    debug_print(f"Twitch IRC: {gifter} is gifting {count} subs (Ignoring summary event)")
 
-                time.sleep(1)
-
-            except requests.exceptions.ConnectionError:
-                debug_print("Twitch: network error — will reconnect")
-                user_id = None
-                time.sleep(backoff)
             except Exception as e:
-                debug_print(f"Twitch monitor error: {e}")
+                debug_print(f"Twitch IRC error: {e}")
+                
+            if self.sock:
+                try:
+                    self.sock.close()
+                except: pass
+                self.sock = None
+                
+            if self.running:
+                debug_print("Twitch IRC: Reconnecting in 5 seconds...")
                 time.sleep(5)
-
+                
         debug_print("Twitch monitor stopped")
 
-    # ── Public control ────────────────────────────────────────
     def start(self):
-        if not self.client_id:
-            debug_print("Twitch credentials not configured")
+        if not config.get('twitch', {}).get('enabled', True):
+            debug_print("Twitch monitor is disabled in config")
             return False
+            
         if self.running and self.thread and self.thread.is_alive():
-            debug_print("Monitor already running")
+            debug_print("Twitch monitor already running")
             return True
+            
         self.running = True
-        self.thread  = threading.Thread(
-            target=self.monitor_loop, daemon=True, name='twitch-monitor')
+        self.thread = threading.Thread(target=self.monitor_loop, daemon=True, name='twitch-monitor')
         self.thread.start()
-        debug_print("Twitch monitor thread started")
         return True
 
     def stop(self):
         self.running = False
+        self._reconnect_requested = True # Break loop
+        if self.sock:
+            try:
+                self.sock.shutdown(socket.SHUT_RDWR)
+                self.sock.close()
+            except: pass
         if self.thread:
             self.thread.join(timeout=5)
         debug_print("Twitch monitor stopped")
 
     def reconnect(self):
-        """Force a re-authentication and re-connect on the next loop tick."""
         debug_print("Twitch: manual reconnect requested")
-        self._reconnect_requested = True
         if not self.is_running():
             return self.start()
-        return True
+        else:
+            self._reconnect_requested = True
+            if self.sock:
+                try:
+                    self.sock.shutdown(socket.SHUT_RDWR)
+                    self.sock.close()
+                except: pass
+            return True
 
     def is_running(self):
         return self.running and self.thread is not None and self.thread.is_alive()
