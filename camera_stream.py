@@ -25,21 +25,34 @@ class CameraStream:
             return True
 
         try:
-            self.camera = cv2.VideoCapture(self.camera_index)
+            debug_print(f"Attempting to open camera {self.camera_index} (V4L2)...")
+            # Explicitly use V4L2 on Linux/Pi, it handles USB webcams much better
+            self.camera = cv2.VideoCapture(self.camera_index, cv2.CAP_V4L2)
 
             if not self.camera.isOpened():
-                debug_print(f"Failed to open camera {self.camera_index}")
-                return False
+                debug_print(f"Failed to open camera {self.camera_index} using V4L2, falling back to ANY...")
+                self.camera = cv2.VideoCapture(self.camera_index)
+                if not self.camera.isOpened():
+                    debug_print(f"Failed to open camera {self.camera_index} entirely. Check /dev/video{self.camera_index} permissions.")
+                    return False
 
+            # Request MJPG format from the camera if available, drastically improves FPS on Pi USB
+            self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+            
             self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
             self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
             self.camera.set(cv2.CAP_PROP_FPS, self.fps)
+
+            # Read back actual settings
+            actual_w = self.camera.get(cv2.CAP_PROP_FRAME_WIDTH)
+            actual_h = self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT)
+            actual_fps = self.camera.get(cv2.CAP_PROP_FPS)
 
             self.running = True
             self.thread = threading.Thread(target=self._capture_loop, daemon=True)
             self.thread.start()
 
-            debug_print(f"Camera started: {self.width}x{self.height} @ {self.fps}fps")
+            debug_print(f"Camera started: {actual_w}x{actual_h} @ {actual_fps}fps")
             return True
 
         except Exception as e:
@@ -49,6 +62,7 @@ class CameraStream:
     def _capture_loop(self):
         """Continuous frame capture loop"""
         frame_time = 1.0 / self.fps
+        consecutive_failures = 0
 
         while self.running:
             try:
@@ -57,10 +71,13 @@ class CameraStream:
                 ret, frame = self.camera.read()
 
                 if ret:
+                    consecutive_failures = 0
                     with self.lock:
                         self.frame = frame
                 else:
-                    debug_print("Failed to read frame")
+                    consecutive_failures += 1
+                    if consecutive_failures % 30 == 0:
+                        debug_print(f"Failed to read frame {consecutive_failures} times in a row")
 
                 # Maintain target FPS
                 elapsed = time.time() - start
