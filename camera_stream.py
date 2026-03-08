@@ -12,7 +12,17 @@ class CameraStream:
         # Default to the udev symlink if no index provided and the symlink exists
         if camera_index is None:
             if os.path.exists('/dev/webcam0'):
-                self.camera_index = '/dev/webcam0'
+                # We must resolve the symlink because OpenCV's V4L2 backend 
+                # often fails when given a string path instead of an integer index
+                try:
+                    real_path = os.path.realpath('/dev/webcam0')
+                    # Extract just the number from e.g. '/dev/video0'
+                    if real_path.startswith('/dev/video'):
+                        self.camera_index = int(real_path.replace('/dev/video', ''))
+                    else:
+                        self.camera_index = 0
+                except:
+                    self.camera_index = 0
             else:
                 self.camera_index = 0
         else:
@@ -53,7 +63,7 @@ class CameraStream:
             return True
 
         try:
-            # 1. Try the configured index/path first (e.g. /dev/webcam0)
+            # 1. Try the configured index/path first
             self.camera = self._try_open_camera(self.camera_index)
             
             # 2. If it fails, auto-scan indices 0 through 10 as fallback
@@ -107,7 +117,7 @@ class CameraStream:
                 ret, frame = self.camera.read()
 
                 if ret:
-                    consecutive_failures = 0
+                    con:s_failures = 0
                     with self.lock:
                         self.frame = frame
                 else:
