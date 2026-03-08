@@ -289,13 +289,15 @@ def main():
 
     # ── Camera stream ────────────────────────────────────
     camera = None
-    if CAMERA_AVAILABLE:
+    if CAMERA_AVAILABLE and config.get('camera_enabled', True):
         print('Starting camera stream...')
         camera = CameraStream()
         if camera.start():
             print('Camera started')
         else:
             print('WARNING: Camera failed to start')
+    elif not config.get('camera_enabled', True):
+        print('Camera stream disabled in config. Skipping initialization.')
 
     # ── Queue processor thread ─────────────────────────────
     print('Starting queue processor...')
