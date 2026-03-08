@@ -70,8 +70,13 @@ class OBSController:
         password = obs_cfg.get('password', '')
 
         try:
+            # We intentionally do not pass a 'timeout' parameter here.
+            # Passing a timeout argument forces the underlying websocket socket
+            # to time out its read thread if no data is sent by OBS, which 
+            # causes the obsws library to think it disconnected, resulting in 
+            # an endless loop of connects/disconnects in the OBS UI.
             self._client = obs.ReqClient(
-                host=host, port=port, password=password, timeout=5)
+                host=host, port=port, password=password)
             self._enabled = True
             debug_print(f'OBS WebSocket connected: {host}:{port}')
         except Exception as e:
