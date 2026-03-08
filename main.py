@@ -261,7 +261,7 @@ def main():
 
     # ── Twitch monitor ───────────────────────────────────
     twitch = TwitchMonitor(enqueue_callback=enqueue_name)
-    if config.get('twitch_enabled', True):
+    if config.get('twitch', {}).get('enabled', True):
         print('Starting Twitch monitor...')
         if twitch.start():
             print('Twitch monitor started')
