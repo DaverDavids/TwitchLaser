@@ -53,10 +53,16 @@ class OBSController:
         self._client  = None
         self._lock    = threading.Lock()
         self._enabled = False
-        self._connect()
+        self._stop_bg = False
 
-    # ── Connection ─────────────────────────────────────────
-    def _connect(self):
+        # Kick off connection in a background thread so __init__ returns instantly.
+        # The thread retries indefinitely until connected, then exits.
+        t = threading.Thread(target=self._connect_loop, daemon=True, name='obs-connect')
+        t.start()
+
+    # ── Background connection loop ──────────────────────────
+    def _connect_loop(self):
+        """Attempt to connect to OBS repeatedly in the background until successful."""
         if not _OBS_AVAILABLE:
             return
 
@@ -65,6 +71,18 @@ class OBSController:
             debug_print('OBS integration disabled in config')
             return
 
+        while not self._stop_bg and not self._enabled:
+            self._try_connect()
+            if not self._enabled:
+                debug_print('OBS: not connected, retrying in 15s...')
+                # Sleep in short increments so we can respond to stop quickly
+                for _ in range(30):
+                    if self._stop_bg or self._enabled:
+                        break
+                    time.sleep(0.5)
+
+    def _try_connect(self):
+        obs_cfg = config.get('obs', {})
         host     = obs_cfg.get('host',     '127.0.0.1')
         port     = int(obs_cfg.get('port', 4455))
         password = obs_cfg.get('password', '')
@@ -72,20 +90,20 @@ class OBSController:
         try:
             # We intentionally do not pass a 'timeout' parameter here.
             # Passing a timeout argument forces the underlying websocket socket
-            # to time out its read thread if no data is sent by OBS, which 
-            # causes the obsws library to think it disconnected, resulting in 
+            # to time out its read thread if no data is sent by OBS, which
+            # causes the obsws library to think it disconnected, resulting in
             # an endless loop of connects/disconnects in the OBS UI.
-            self._client = obs.ReqClient(
-                host=host, port=port, password=password)
-            self._enabled = True
+            client = obs.ReqClient(host=host, port=port, password=password)
+            with self._lock:
+                self._client  = client
+                self._enabled = True
             debug_print(f'OBS WebSocket connected: {host}:{port}')
         except Exception as e:
             debug_print(f'OBS WebSocket connection failed: {e}')
-            self._client  = None
-            self._enabled = False
 
+    # ── Connection ─────────────────────────────────────────
     def reconnect(self):
-        """Re-read config and reconnect."""
+        """Re-read config and reconnect (called from web UI or after failure)."""
         with self._lock:
             if self._client:
                 try:
@@ -94,8 +112,12 @@ class OBSController:
                     pass
             self._client  = None
             self._enabled = False
-        self._connect()
-        return self._enabled
+
+        # Spawn a fresh background connect loop
+        self._stop_bg = False
+        t = threading.Thread(target=self._connect_loop, daemon=True, name='obs-reconnect')
+        t.start()
+        return True  # Returns immediately; connection happens in background
 
     def is_connected(self):
         return self._enabled and self._client is not None
@@ -135,23 +157,24 @@ class OBSController:
 
         except Exception as e:
             debug_print(f'OBS action "{atype}" failed: {e}')
-            # Mark disconnected so next call will skip cleanly
-            self._enabled = False
+            # Mark disconnected; background reconnect loop will pick this up
+            with self._lock:
+                self._enabled = False
+            self._stop_bg = False
+            t = threading.Thread(target=self._connect_loop, daemon=True, name='obs-reconnect')
+            t.start()
 
     def _set_source_visible(self, scene_name, source_name, visible):
         """Show or hide a source in a scene."""
-        # Get the scene item ID first
         resp = self._client.get_scene_item_id(scene_name, source_name)
         item_id = resp.scene_item_id
-        self._client.set_scene_item_enabled(
-            scene_name, item_id, visible)
+        self._client.set_scene_item_enabled(scene_name, item_id, visible)
         state = 'shown' if visible else 'hidden'
         debug_print(f'OBS: {state} source "{source_name}" in "{scene_name}"')
 
     def _set_text_source(self, scene_name, source_name, text):
         """Update a Text GDI+/Freetype source."""
-        self._client.set_input_settings(
-            source_name, {'text': text}, overlay=True)
+        self._client.set_input_settings(source_name, {'text': text}, overlay=True)
         debug_print(f'OBS: set "{source_name}" text to "{text}"')
 
     # ── Public event hooks ────────────────────────────────

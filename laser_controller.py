@@ -18,13 +18,14 @@ class LaserController:
         self._line_buf = ''
         self._monitor_thread = None
         self._monitor_running = False
-        self._engraving = False  # flag to pause monitor during jobs
-        self._abort_flag = False # flag to interrupt gcode stream immediately
+        self._engraving = False
+        self._abort_flag = False
         
         self.machine_state = "Unknown"
         self.mpos = {"x": 0.0, "y": 0.0, "z": 0.0}
         
-        self.connect()
+        # Start monitor thread immediately — it handles initial connect
+        # and all future reconnects, so __init__ returns without blocking.
         self._start_monitor()
 
     # ── Connection ────────────────────────────────────────────
@@ -54,8 +55,7 @@ class LaserController:
             host = secrets.FLUIDNC_HOST
             port = secrets.FLUIDNC_PORT
             self.connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            # Short timeout on the socket itself so we can intercept connection drops easily
-            self.connection.settimeout(0.5) 
+            self.connection.settimeout(0.5)
             self.connection.connect((host, port))
             self.connected = True
             debug_print(f"Connected to FluidNC at {host}:{port}")
@@ -99,15 +99,11 @@ class LaserController:
 
     # ── Status Parsing ────────────────────────────────────────
     def _parse_status(self, response):
-        # Example: <Idle|MPos:10.000,20.000,0.000|FS:0,0>
         try:
             content = response.strip('<>\r\n ')
             parts = content.split('|')
             if not parts: return
-            
-            # Grbl state is the first item
             self.machine_state = parts[0]
-            
             for p in parts[1:]:
                 if p.startswith('MPos:') or p.startswith('WPos:'):
                     coords = p.split(':')[1].split(',')
@@ -120,13 +116,21 @@ class LaserController:
 
     # ── Background connection monitor ─────────────────────────
     def _start_monitor(self):
-        """Start background thread that auto-reconnects on drop."""
+        """Start background thread that handles initial connect and auto-reconnects."""
         self._monitor_running = True
         self._monitor_thread = threading.Thread(
             target=self._monitor_loop, daemon=True, name='laser-monitor')
         self._monitor_thread.start()
 
     def _monitor_loop(self):
+        # Attempt initial connection before entering the steady-state poll loop
+        if not self.connected:
+            debug_print("LaserController: initial connect attempt in background...")
+            try:
+                self.connect()
+            except Exception as e:
+                debug_print(f"LaserController: initial connect failed: {e}")
+
         while self._monitor_running:
             time.sleep(0.5)
             
@@ -134,14 +138,10 @@ class LaserController:
                 got_lock = self.lock.acquire(blocking=False)
                 if got_lock:
                     try:
-                        # We have the lock, meaning no active commands or streams.
-                        # Safely ask for status and parse the buffer.
                         if self.connection_type == 'network':
                             self.connection.sendall(b'?')
                         else:
                             self.connection.write(b'?')
-                            
-                        # Read specifically to catch the <...> block
                         resp = self._read_line(max_wait_seconds=0.2)
                         if resp and resp.startswith('<'):
                             self._parse_status(resp)
@@ -152,9 +152,7 @@ class LaserController:
                     finally:
                         self.lock.release()
                 else:
-                    # System is actively streaming gcode! The lock is held by send_gcode.
-                    # Send ? without lock (safe for GRBL single byte RT commands)
-                    # The response will be caught and parsed by the send_gcode read loop.
+                    # Lock held by send_gcode — send ? without lock (safe RT command)
                     try:
                         if self.connection_type == 'network':
                             self.connection.sendall(b'?')
@@ -170,7 +168,7 @@ class LaserController:
                         debug_print("FluidNC reconnected successfully")
                 except Exception as e:
                     debug_print(f"Reconnect attempt failed: {e}")
-                    time.sleep(4.5) # Wait longer before retrying
+                    time.sleep(4.5)
 
     def stop_monitor(self):
         self._monitor_running = False
@@ -200,7 +198,6 @@ class LaserController:
             if getattr(self, '_abort_flag', False):
                 return "ALARM: aborted by software"
                 
-            # Check if we have a full line in buffer
             if '\n' in self._line_buf:
                 line, self._line_buf = self._line_buf.split('\n', 1)
                 line = line.strip()
@@ -218,7 +215,6 @@ class LaserController:
                             debug_print("_read_line: Connection remotely closed.")
                             return None
                     except socket.timeout:
-                        # expected behavior if laser is just executing a move
                         continue
                 else:
                     if self.connection.in_waiting > 0:
@@ -240,7 +236,6 @@ class LaserController:
                 if not self.reconnect():
                     return False, "Not connected to FluidNC"
             try:
-                # Discard any old buffer
                 self._flush_input()
                 cmd = command.strip() + '\n'
                 if self.connection_type == 'network':
@@ -248,13 +243,10 @@ class LaserController:
                 else:
                     self.connection.write(cmd.encode())
                     
-                # GRBL real-time commands (~, !, ?, \x18) don't return 'ok'
                 if command in ('?', '~', '!', '\x18'):
                     return True, "Sent RT command"
 
                 response = self._read_line(max_wait_seconds=2.0) or ''
-                
-                # If we catch a status update instead of the answer, parse it and fetch next
                 while response.startswith('<'):
                     self._parse_status(response)
                     response = self._read_line(max_wait_seconds=2.0) or ''
@@ -321,12 +313,7 @@ class LaserController:
                         if log_file: log_file.write(f"ABORT: {err_msg}\n"); log_file.close()
                         return False, err_msg
 
-                    # Wait for OK
                     while True:
-                        # G1 lines and synchronous commands like M5 can take a very 
-                        # long time to return 'ok' because FluidNC will not return ok 
-                        # until the physical movement finishes if the planner buffer is full.
-                        # We use a 1-hour timeout (3600s) specifically for the streaming loop.
                         response = self._read_line(max_wait_seconds=3600.0)
                         
                         if response is None:
@@ -337,7 +324,6 @@ class LaserController:
                             
                         lc = response.lower()
                         
-                        # Parse status if background thread sent a '?' query
                         if lc.startswith('<'):
                             self._parse_status(response)
                             continue
@@ -361,9 +347,8 @@ class LaserController:
                             if log_file: log_file.write(f"ERROR_DETECTED: {err_msg}\n")
                             return False, err_msg
                             
-                        # Skip non-response lines
-                        if (lc.startswith('[echo:') or 
-                            lc.startswith('[gc:') or 
+                        if (lc.startswith('[echo:') or
+                            lc.startswith('[gc:') or
                             lc.startswith('[msg:')):
                             continue
 
@@ -376,7 +361,7 @@ class LaserController:
                         progress_callback(i + 1, total)
 
                 debug_print(f"Successfully sent {total} commands")
-                if log_file: 
+                if log_file:
                     log_file.write(f"--- STREAM COMPLETE ---\n")
                     log_file.close()
                 return True, f"Completed {total} commands"
@@ -400,10 +385,9 @@ class LaserController:
         return self.send_command("\x18")
         
     def clear_alarm(self):
-        """Standard sequence to force clear a hard alarm and regain control"""
-        self.send_command("\x18")  # Ctrl-X Soft Reset
+        self.send_command("\x18")
         time.sleep(0.5)
-        self.send_command("$X")    # Unlock
+        self.send_command("$X")
         time.sleep(0.1)
         return True, "Alarm Cleared"
 
