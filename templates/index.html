@@ -278,7 +278,7 @@
                 <button class="secondary" onclick="setLedLevel()" style="white-space:nowrap;">Set</button>
                 <button class="secondary" onclick="setLedOff()" style="white-space:nowrap; padding:4px 8px;">Off</button>
             </div>
-            <p class="hint">0% = off, 100% = full brightness. Mapped to M67 E0 Q0&#8211;1000.</p>
+            <p class="hint">0% = off, 100% = full brightness. Sends M67 E0 Q0&#8211;100 to FluidNC.</p>
         </div>
     </div>
 
@@ -503,7 +503,7 @@
             <div style="grid-column:1/-1">
                 <label>&#128161; LED Brightness (0&#8211;100%) <span style="color:#6b6b78; font-weight:normal;">&#8212; 0 = off</span></label>
                 <input type="number" id="s-led-pwm" min="0" max="100" step="1" value="0" placeholder="0">
-                <p class="hint">LEDs turn on at this brightness when engraving starts and off when done. Mapped to M67 E0 Q0&#8211;1000.</p>
+                <p class="hint">LEDs turn on at this brightness when engraving starts and off when done. Sends M67 E0 Q0&#8211;100 to FluidNC.</p>
             </div>
         </div>
         <div class="btn-row">
@@ -647,9 +647,9 @@ async function api(path, method, body) {
     return r.json();
 }
 
-// Convert 0-100 percent to FluidNC Q value (0-1000)
+// FluidNC M67 Q value is 0-100 percent directly — no scaling needed
 function pctToQ(pct) {
-    return Math.round(Math.min(100, Math.max(0, pct)) / 100 * 1000);
+    return Math.round(Math.min(100, Math.max(0, pct)));
 }
 
 // STATUS
@@ -1095,11 +1095,9 @@ async function updateQueue() {
                     actionBtns += `<button class="secondary" onclick="downloadGcode('${j.id}')" title="Download G-Code">&#11015;</button>`;
                 }
 
-                // Build the settings tooltip using an HTML table so rows break properly
                 var settingsHtml = '';
                 if (j.settings && Object.keys(j.settings).length > 0) {
                     var s = j.settings;
-                    // Compute end coordinates from start + size (matches Test Engrave X1/Y1/X2/Y2 inputs)
                     var x1 = (s.x_machine !== undefined) ? s.x_machine : '?';
                     var y1 = (s.y_machine !== undefined) ? s.y_machine : '?';
                     var x2 = (s.x_machine !== undefined && s.width  !== undefined) ? (Math.round((s.x_machine + s.width)  * 100) / 100) : '?';
