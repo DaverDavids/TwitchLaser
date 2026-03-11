@@ -272,13 +272,13 @@
 
         <!-- MANUAL LED CONTROL -->
         <div style="border-top: 1px solid #2d2d35; padding-top: 12px; margin-top: 4px;">
-            <label style="margin-top:0;">&#128161; LED Level (0&#8211;255)</label>
+            <label style="margin-top:0;">&#128161; LED Level (0&#8211;100%)</label>
             <div style="display:flex; gap:6px;">
-                <input type="number" id="manual-led" min="0" max="255" step="1" value="0" placeholder="0-255">
+                <input type="number" id="manual-led" min="0" max="100" step="1" value="0" placeholder="0-100">
                 <button class="secondary" onclick="setLedLevel()" style="white-space:nowrap;">Set</button>
                 <button class="secondary" onclick="setLedOff()" style="white-space:nowrap; padding:4px 8px;">Off</button>
             </div>
-            <p class="hint">Sends M67 E0 Q# directly to the controller.</p>
+            <p class="hint">0% = off, 100% = full brightness. Mapped to M67 E0 Q0&#8211;1000.</p>
         </div>
     </div>
 
@@ -501,9 +501,9 @@
                 <p class="hint">Raises Z to this position before engraving.</p>
             </div>
             <div style="grid-column:1/-1">
-                <label>&#128161; LED PWM (0&#8211;255) <span style="color:#6b6b78; font-weight:normal;">&#8212; 0 = off</span></label>
-                <input type="number" id="s-led-pwm" min="0" max="255" step="1" value="0" placeholder="0">
-                <p class="hint">LEDs turn on at this level when engraving starts and off when done (M67 E0 Q#).</p>
+                <label>&#128161; LED Brightness (0&#8211;100%) <span style="color:#6b6b78; font-weight:normal;">&#8212; 0 = off</span></label>
+                <input type="number" id="s-led-pwm" min="0" max="100" step="1" value="0" placeholder="0">
+                <p class="hint">LEDs turn on at this brightness when engraving starts and off when done. Mapped to M67 E0 Q0&#8211;1000.</p>
             </div>
         </div>
         <div class="btn-row">
@@ -645,6 +645,11 @@ async function api(path, method, body) {
     if (body) opts.body = JSON.stringify(body);
     var r = await fetch(path, opts);
     return r.json();
+}
+
+// Convert 0-100 percent to FluidNC Q value (0-1000)
+function pctToQ(pct) {
+    return Math.round(Math.min(100, Math.max(0, pct)) / 100 * 1000);
 }
 
 // STATUS
@@ -791,12 +796,13 @@ async function sendManual() {
 
 // MANUAL LED CONTROL
 async function setLedLevel() {
-    var val = parseInt(document.getElementById('manual-led').value, 10);
-    if (isNaN(val) || val < 0) val = 0;
-    if (val > 255) val = 255;
-    var cmd = 'M67 E0 Q' + val;
+    var pct = parseInt(document.getElementById('manual-led').value, 10);
+    if (isNaN(pct) || pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    var qVal = pctToQ(pct);
+    var cmd = 'M67 E0 Q' + qVal;
     var r = await api('/api/laser_command', 'POST', {command: cmd});
-    log('LED: ' + cmd + '  ->  ' + (r.response || (r.success ? 'OK' : 'Failed')), r.success ? '#ffa000' : '#e91916');
+    log('LED: ' + pct + '% -> ' + cmd + '  ->  ' + (r.response || (r.success ? 'OK' : 'Failed')), r.success ? '#ffa000' : '#e91916');
 }
 async function setLedOff() {
     document.getElementById('manual-led').value = 0;
@@ -1001,7 +1007,7 @@ async function saveLaserSettings() {
         speed_mm_per_min: +document.getElementById('s-speed').value,
         passes:           +document.getElementById('s-passes').value,
         z_height_mm:      +document.getElementById('s-z-height').value,
-        led_pwm:          Math.min(255, Math.max(0, +document.getElementById('s-led-pwm').value))
+        led_pwm:          Math.min(100, Math.max(0, +document.getElementById('s-led-pwm').value))
     }};
     await api('/api/config','POST',body);
     flashOk('laser-ok'); log('Laser settings saved','#00c853');
