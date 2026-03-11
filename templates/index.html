@@ -302,7 +302,9 @@
         </div>
         <div class="btn-row" style="justify-content: center;">
             <button class="secondary" onclick="reloadCamera()" style="font-size: 0.75rem; padding: 4px 8px;">&#128260; Reload Stream</button>
+            <button class="secondary" id="btn-camera-toggle" onclick="toggleCameraFeed()" style="font-size: 0.75rem; padding: 4px 8px;">&#9211; Disable Feed</button>
         </div>
+        <p style="font-size:0.72rem; color:#6b6b78; margin-top:6px; text-align:center;">Disabling the feed stops the browser from fetching the stream, reducing resource usage. The OBS source is unaffected.</p>
     </div>
 
 
@@ -686,6 +688,8 @@ function setDot(id, on) { document.getElementById(id).className = 'dot' + (on ? 
 function setVal(id, v)  { var el = document.getElementById(id); if (el) el.value = v; }
 
 // CAMERA
+var _cameraEnabled = true;
+
 function handleCameraError() {
     document.getElementById('camera-stream').style.display = 'none';
     document.getElementById('camera-placeholder').style.display = 'block';
@@ -693,11 +697,46 @@ function handleCameraError() {
 }
 
 function reloadCamera() {
+    if (!_cameraEnabled) {
+        // Re-enable the feed if it was disabled
+        _cameraEnabled = true;
+        var btn = document.getElementById('btn-camera-toggle');
+        btn.innerHTML = '&#9211; Disable Feed';
+        btn.classList.remove('warn');
+        btn.classList.add('secondary');
+    }
     var img = document.getElementById('camera-stream');
     document.getElementById('camera-placeholder').style.display = 'none';
     img.style.display = 'block';
     // Change host to the same hostname but port 8080 for ustreamer instead of the local flask app!
     img.src = window.location.protocol + '//' + window.location.hostname + ':8080/stream';
+}
+
+function toggleCameraFeed() {
+    var img = document.getElementById('camera-stream');
+    var placeholder = document.getElementById('camera-placeholder');
+    var btn = document.getElementById('btn-camera-toggle');
+    
+    if (_cameraEnabled) {
+        // Disable: clear the src so the browser stops fetching the stream entirely
+        img.src = '';
+        img.style.display = 'none';
+        placeholder.style.display = 'block';
+        placeholder.innerHTML = 'Feed disabled (browser only).<br><span style="font-size: 0.75rem;">Click \u201cEnable Feed\u201d or \u201cReload Stream\u201d to resume.</span>';
+        btn.innerHTML = '&#9654; Enable Feed';
+        btn.classList.remove('secondary');
+        btn.classList.add('warn');
+        _cameraEnabled = false;
+        log('Camera feed disabled in browser (server/OBS unaffected)', '#ffa000');
+    } else {
+        // Re-enable: reload the stream
+        _cameraEnabled = true;
+        btn.innerHTML = '&#9211; Disable Feed';
+        btn.classList.remove('warn');
+        btn.classList.add('secondary');
+        reloadCamera();
+        log('Camera feed re-enabled in browser', '#00c853');
+    }
 }
 
 // FONT DROPDOWN
