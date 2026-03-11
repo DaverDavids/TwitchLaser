@@ -540,12 +540,19 @@ class GCodeGenerator:
         
         s = config.get('laser_settings', {})
         t = config.get('text_settings', {})
-        
+        ea = config.get('engraving_area', {})
+
         passes         = int(s.get('passes', 1))
         bold_repeats   = int(t.get('bold_repeats', 1))
         bold_offset_mm = float(t.get('bold_offset_mm', 0.15))
         bold_pattern   = t.get('bold_pattern', 'cross')
         mirror_y       = t.get('mirror_y', False)
+
+        # Machine hard limits — clamp all output coordinates to these bounds
+        # to prevent soft-limit alarms when concentric offsets push points
+        # slightly outside the requested box (max overshoot = bold_offset_mm * 2.0).
+        machine_max_x = float(ea.get('machine_width_mm',  300))
+        machine_max_y = float(ea.get('machine_height_mm', 300))
         
         s_val = int((self.laser_power / 100.0) * self.spindle_max)
 
@@ -581,6 +588,13 @@ class GCodeGenerator:
             offsets = self._get_bold_offsets(bold_repeats, bold_offset_mm, bold_pattern)
             normal_cmds = None
 
+        def _clamp(x, y):
+            """Clamp a machine-space point to the physical bed limits."""
+            return (
+                max(0.0, min(x, machine_max_x)),
+                max(0.0, min(y, machine_max_y)),
+            )
+
         def _tx(pt, norm_vec, amt, bx, by):
             # Scale raw FreeType points and SHIFT them so that min_x starts exactly at 0
             mx = (pt[0] - min_x_raw) * active_scale
@@ -596,8 +610,10 @@ class GCodeGenerator:
             
             if mirror_y:
                 ny = -ny
-                
-            return (mx + offset_x + bx + nx, my + offset_y + by + ny)
+
+            raw_x = mx + offset_x + bx + nx
+            raw_y = my + offset_y + by + ny
+            return _clamp(raw_x, raw_y)
 
         gcode = [
             f"; TwitchLaser Engrave: '{text}'",
@@ -664,10 +680,10 @@ class GCodeGenerator:
 
         gcode.extend([
             "; Job Complete",
-            "G90",         
-            "G0 Z0",       
-            "$H",          
-            "$MD",         
+            "G90",
+            "G0 Z0",
+            "$H",
+            "$MD",
         ])
 
         return "\n".join(gcode)
