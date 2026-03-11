@@ -219,10 +219,25 @@ def process_queue(laser, layout, gcode_gen, obs):
 
 
 def _run_engrave(job, gcode, name, laser, obs):
+    """Run a single engrave job: fire LED on, engrave, LED off."""
+    # Read LED PWM level from config (0 = disabled / no LED command sent)
+    led_pwm = int(config.get('laser_settings.led_pwm', 0))
+    led_pwm = max(0, min(255, led_pwm))
+
+    if led_pwm > 0:
+        debug_print(f'LED on: M67 E0 Q{led_pwm}')
+        laser.send_command(f'M67 E0 Q{led_pwm}')
+
     if obs:
         obs.on_engrave_start(name=name)
 
-    success, message = laser.send_gcode(gcode.split('\n'))
+    try:
+        success, message = laser.send_gcode(gcode.split('\n'))
+    finally:
+        # Always turn LEDs off after engraving, even on error/stop
+        if led_pwm > 0:
+            debug_print('LED off: M67 E0 Q0')
+            laser.send_command('M67 E0 Q0')
 
     if obs:
         obs.on_engrave_finish(name=name, success=success)

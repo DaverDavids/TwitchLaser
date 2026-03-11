@@ -266,6 +266,17 @@
             <input type="number" id="abs-z" placeholder="Z" style="width:60px; padding:4px;">
             <button class="success" style="padding:4px 10px;" onclick="goToAbs()">Go</button>
         </div>
+
+        <!-- MANUAL LED CONTROL -->
+        <div style="border-top: 1px solid #2d2d35; padding-top: 12px; margin-top: 4px;">
+            <label style="margin-top:0;">&#128161; LED Level (0&#8211;255)</label>
+            <div style="display:flex; gap:6px;">
+                <input type="number" id="manual-led" min="0" max="255" step="1" value="0" placeholder="0-255">
+                <button class="secondary" onclick="setLedLevel()" style="white-space:nowrap;">Set</button>
+                <button class="secondary" onclick="setLedOff()" style="white-space:nowrap; padding:4px 8px;">Off</button>
+            </div>
+            <p class="hint">Sends M67 E0 Q# directly to the controller.</p>
+        </div>
     </div>
 
 
@@ -310,7 +321,7 @@
 
     <!-- QUEUE / HISTORY -->
     <div class="card span-2" style="grid-column: 1 / -1; @media (min-width: 768px) { grid-column: span 2; }">
-        <h3>Engraving Queue & History</h3>
+        <h3>Engraving Queue &amp; History</h3>
         <div id="queue-container">
             <div id="queue-list">Loading queue...</div>
         </div>
@@ -486,6 +497,11 @@
                 <input type="number" id="s-z-height" min="0" max="100" step="0.1" value="0" placeholder="0">
                 <p class="hint">Raises Z to this position before engraving.</p>
             </div>
+            <div style="grid-column:1/-1">
+                <label>&#128161; LED PWM (0&#8211;255) <span style="color:#6b6b78; font-weight:normal;">&#8212; 0 = off</span></label>
+                <input type="number" id="s-led-pwm" min="0" max="255" step="1" value="0" placeholder="0">
+                <p class="hint">LEDs turn on at this level when engraving starts and off when done (M67 E0 Q#).</p>
+            </div>
         </div>
         <div class="btn-row">
             <button onclick="saveLaserSettings()">&#128190; Save Settings</button>
@@ -533,7 +549,7 @@
             </div>
         </div>
         <div class="btn-row">
-            <button onclick="saveTwitchSettings()">&#128190; Save & Reconnect</button>
+            <button onclick="saveTwitchSettings()">&#128190; Save &amp; Reconnect</button>
             <span class="save-ok" id="twitch-ok">&#10003; Saved</span>
         </div>
     </div>
@@ -635,8 +651,6 @@ async function updateStatus() {
         setDot('dot-laser',  s.laser_connected);
         setDot('dot-twitch', s.twitch_running);
         
-        // We override the dot to show green if either native or external camera is active
-        // But for UI logic, we assume we want it green if the new img.src is rendering
         var img = document.getElementById('camera-stream');
         setDot('dot-camera', img.style.display !== 'none');
         
@@ -658,7 +672,6 @@ async function updateStatus() {
         
         document.getElementById('stat-queue').textContent    = s.queue_size;
         document.getElementById('stat-names').textContent    = s.placements;
-        //document.getElementById('stat-coverage').textContent = s.coverage + '%';
         document.getElementById('btn-twitch').innerHTML      = s.twitch_running ? '&#9646;&#9646; Stop' : '&#9654; Start';
 
         if (!window._settingsLoaded && s.config) {
@@ -669,16 +682,16 @@ async function updateStatus() {
             setVal('s-speed',      ls.speed_mm_per_min  || 1000);
             setVal('s-passes',     ls.passes            || 1);
             setVal('s-z-height',   ls.z_height_mm !== undefined ? ls.z_height_mm : (ls.z_depth_mm !== undefined ? ls.z_depth_mm : 0));
+            setVal('s-led-pwm',    ls.led_pwm !== undefined ? ls.led_pwm : 0);
             setVal('s-height',     ts2.initial_height_mm || 5);
             setVal('s-min-height', ts2.min_height_mm     || 2);
             
-            // New Bolding & Mirror settings
             setVal('s-bold-repeats', ts2.bold_repeats || 1);
             setVal('s-bold-offset',  ts2.bold_offset_mm || 0.15);
             if (ts2.bold_pattern) setVal('s-bold-pattern', ts2.bold_pattern);
             if (ts2.mirror_y !== undefined) setVal('s-mirror-y', ts2.mirror_y ? 'true' : 'false');
             
-            if (ts2.font)     setVal('s-font',     ts2.font);
+            if (ts2.font) setVal('s-font', ts2.font);
             window._settingsLoaded = true;
         }
     } catch(e) {}
@@ -698,7 +711,6 @@ function handleCameraError() {
 
 function reloadCamera() {
     if (!_cameraEnabled) {
-        // Re-enable the feed if it was disabled
         _cameraEnabled = true;
         var btn = document.getElementById('btn-camera-toggle');
         btn.innerHTML = '&#9211; Disable Feed';
@@ -708,7 +720,6 @@ function reloadCamera() {
     var img = document.getElementById('camera-stream');
     document.getElementById('camera-placeholder').style.display = 'none';
     img.style.display = 'block';
-    // Change host to the same hostname but port 8080 for ustreamer instead of the local flask app!
     img.src = window.location.protocol + '//' + window.location.hostname + ':8080/stream';
 }
 
@@ -718,7 +729,6 @@ function toggleCameraFeed() {
     var btn = document.getElementById('btn-camera-toggle');
     
     if (_cameraEnabled) {
-        // Disable: clear the src so the browser stops fetching the stream entirely
         img.src = '';
         img.style.display = 'none';
         placeholder.style.display = 'block';
@@ -729,7 +739,6 @@ function toggleCameraFeed() {
         _cameraEnabled = false;
         log('Camera feed disabled in browser (server/OBS unaffected)', '#ffa000');
     } else {
-        // Re-enable: reload the stream
         _cameraEnabled = true;
         btn.innerHTML = '&#9211; Disable Feed';
         btn.classList.remove('warn');
@@ -745,12 +754,9 @@ async function loadFonts() {
         var fonts = await api('/api/fonts');
         var sel   = document.getElementById('s-font');
         sel.innerHTML = '';
-        
-        // Add random option first
         var randOpt = document.createElement('option');
         randOpt.value = 'random'; randOpt.textContent = 'Random (per job)';
         sel.appendChild(randOpt);
-        
         fonts.forEach(function(f) {
             var opt = document.createElement('option');
             opt.value = f.key; opt.textContent = f.label;
@@ -778,6 +784,21 @@ async function sendManual() {
     var r = await api('/api/laser_command', 'POST', {command: cmd});
     log('> ' + cmd + '  ->  ' + (r.response || ''), r.success ? '#efeff1' : '#e91916');
     document.getElementById('manual-cmd').value = '';
+}
+
+// MANUAL LED CONTROL
+async function setLedLevel() {
+    var val = parseInt(document.getElementById('manual-led').value, 10);
+    if (isNaN(val) || val < 0) val = 0;
+    if (val > 255) val = 255;
+    var cmd = 'M67 E0 Q' + val;
+    var r = await api('/api/laser_command', 'POST', {command: cmd});
+    log('LED: ' + cmd + '  ->  ' + (r.response || (r.success ? 'OK' : 'Failed')), r.success ? '#ffa000' : '#e91916');
+}
+async function setLedOff() {
+    document.getElementById('manual-led').value = 0;
+    var r = await api('/api/laser_command', 'POST', {command: 'M67 E0 Q0'});
+    log('LED off (M67 E0 Q0)', r.success ? '#adadb8' : '#e91916');
 }
 
 // TWITCH CONTROLS
@@ -828,8 +849,6 @@ async function jog(axisDir) {
     var dir = axisDir.charAt(1);
     var dist = dir === '+' ? step : '-' + step;
     var feed = axis === 'Z' ? 500 : 3000;
-    
-    // Grbl 1.1 jogging command
     var cmd = '$J=G91 F' + feed + ' ' + axis + dist;
     var r = await api('/api/laser_command', 'POST', {command: cmd});
     log('Jog: ' + cmd, r.success ? '#efeff1' : '#e91916');
@@ -866,7 +885,6 @@ async function testEngrave() {
     var x1=document.getElementById('te-x1').value, y1=document.getElementById('te-y1').value,
         x2=document.getElementById('te-x2').value, y2=document.getElementById('te-y2').value;
     var body = {text: text};
-    
     if (x1 !== '' && y1 !== '') {
         body.rect = { x1: parseFloat(x1), y1: parseFloat(y1) };
         if (x2 !== '' && y2 !== '') {
@@ -874,7 +892,6 @@ async function testEngrave() {
             body.rect.y2 = parseFloat(y2);
         }
     }
-        
     var r  = await api('/api/test_engrave', 'POST', body);
     var el = document.getElementById('engrave-result');
     el.textContent = r.message; el.style.color = r.success ? '#00c853' : '#e91916';
@@ -886,11 +903,9 @@ async function startFocusTest() {
     if (!confirm('Warning: This will send G-Code immediately to the laser, moving from X1,Y1 to X2,Y2 and ramping the Z axis. Ensure the bed is clear. Proceed?')) {
         return;
     }
-    
     var el = document.getElementById('focus-result');
     el.textContent = 'Sending...';
     el.style.color = '#ffa000';
-    
     var body = {
         x1: document.getElementById('ft-x1').value,
         y1: document.getElementById('ft-y1').value,
@@ -902,8 +917,6 @@ async function startFocusTest() {
         speed: document.getElementById('ft-speed').value,
         power: document.getElementById('ft-power').value
     };
-    
-    // Validate inputs
     for (var key in body) {
         if (body[key] === '') {
             el.textContent = 'Error: All fields are required';
@@ -912,7 +925,6 @@ async function startFocusTest() {
         }
         body[key] = parseFloat(body[key]);
     }
-    
     var r = await api('/api/focus_test', 'POST', body);
     el.textContent = r.message; 
     el.style.color = r.success ? '#00c853' : '#e91916';
@@ -958,7 +970,6 @@ async function saveOBSSettings() {
     catch(e) { alert('Start Actions JSON is invalid: ' + e.message); return; }
     try { finishActions = JSON.parse(document.getElementById('obs-finish-actions').value || '[]'); }
     catch(e) { alert('Finish Actions JSON is invalid: ' + e.message); return; }
-
     var body = {
         enabled:  document.getElementById('obs-enabled').value === 'true',
         host:     document.getElementById('obs-host').value.trim(),
@@ -986,7 +997,8 @@ async function saveLaserSettings() {
         spindle_max:      +document.getElementById('s-spindle-max').value,
         speed_mm_per_min: +document.getElementById('s-speed').value,
         passes:           +document.getElementById('s-passes').value,
-        z_height_mm:      +document.getElementById('s-z-height').value
+        z_height_mm:      +document.getElementById('s-z-height').value,
+        led_pwm:          Math.min(255, Math.max(0, +document.getElementById('s-led-pwm').value))
     }};
     await api('/api/config','POST',body);
     flashOk('laser-ok'); log('Laser settings saved','#00c853');
@@ -1053,46 +1065,35 @@ async function updateQueue() {
     try {
         var d = await api('/api/jobs');
         var jsonStr = JSON.stringify(d.jobs);
-        if (jsonStr === _lastQueueJson) return; // Only re-render if data actually changed
+        if (jsonStr === _lastQueueJson) return;
         _lastQueueJson = jsonStr;
-
         var el = document.getElementById('queue-list');
         if (d.jobs && d.jobs.length > 0) {
             el.innerHTML = d.jobs.map(function(j) {
                 var statusColor = '#adadb8';
-                var statusIcon = '&#8987;'; // hourglass
-                if (j.status === 'active') { statusColor = '#9147ff'; statusIcon = '&#9889;'; } // lightning
-                else if (j.status === 'finished') { statusColor = '#00c853'; statusIcon = '&#10004;'; } // check
-                else if (j.status === 'failed' || j.status === 'stopped') { statusColor = '#e91916'; statusIcon = '&#10060;'; } // X
-                
+                var statusIcon = '&#8987;';
+                if (j.status === 'active') { statusColor = '#9147ff'; statusIcon = '&#9889;'; }
+                else if (j.status === 'finished') { statusColor = '#00c853'; statusIcon = '&#10004;'; }
+                else if (j.status === 'failed' || j.status === 'stopped') { statusColor = '#e91916'; statusIcon = '&#10060;'; }
                 var timeStr = new Date(j.timestamp).toLocaleString();
-                
                 var actionBtns = '';
                 if (j.status === 'active' || j.status === 'pending') {
-                    actionBtns += `<button class="danger" onclick="jobAction('${j.id}', 'stop')" title="Stop Engraving">&#9209;</button>`; // stop square
+                    actionBtns += `<button class="danger" onclick="jobAction('${j.id}', 'stop')" title="Stop Engraving">&#9209;</button>`;
                 } else {
-                    actionBtns += `<button class="secondary" onclick="jobAction('${j.id}', 'redo')" title="Redo Engrave with exact same settings">&#128259;</button>`; // refresh/redo
+                    actionBtns += `<button class="secondary" onclick="jobAction('${j.id}', 'redo')" title="Redo Engrave with exact same settings">&#128259;</button>`;
                 }
-                
                 if (j.gcode_file) {
-                    actionBtns += `<button class="secondary" onclick="downloadGcode('${j.id}')" title="Download G-Code">&#11015;</button>`; // down arrow
+                    actionBtns += `<button class="secondary" onclick="downloadGcode('${j.id}')" title="Download G-Code">&#11015;</button>`;
                 }
-                
                 var settingsHtml = '';
                 if (j.settings && Object.keys(j.settings).length > 0) {
                     var sText = `Font: ${j.settings.font}\\nSize: ${j.settings.width}x${j.settings.height} mm\\nPosition: (${j.settings.x_machine}, ${j.settings.y_machine})\\nPower: ${j.settings.power}%\\nSpeed: ${j.settings.speed} mm/m`;
                     if (j.settings.bold_repeats > 1) {
                          sText += `\\nBold: ${j.settings.bold_repeats}x (${j.settings.bold_offset_mm}mm)`;
                     }
-                    settingsHtml = `
-                        <div class="job-settings-tooltip">&#9881;
-                            <span class="tooltiptext">${sText}</span>
-                        </div>
-                    `;
+                    settingsHtml = `<div class="job-settings-tooltip">&#9881;<span class="tooltiptext">${sText}</span></div>`;
                 }
-                
                 var errText = j.error ? `<div style="color:#e91916; font-size:0.75rem; margin-top:4px;">${j.error}</div>` : '';
-                
                 return `
                 <div class="queue-item ${j.status}">
                     <div class="queue-icon" title="${timeStr}">${statusIcon}</div>
@@ -1102,9 +1103,7 @@ async function updateQueue() {
                         ${settingsHtml}
                         ${errText}
                     </div>
-                    <div class="queue-actions">
-                        ${actionBtns}
-                    </div>
+                    <div class="queue-actions">${actionBtns}</div>
                 </div>`;
             }).join('');
         } else { 
@@ -1117,14 +1116,13 @@ async function jobAction(jobId, action) {
     if (action === 'redo' && !confirm('Are you sure you want to redo this exact engrave? It will overlap if the board has not moved.')) return;
     var r = await api('/api/jobs/' + jobId + '/action', 'POST', {action: action});
     log('Job ' + action + ': ' + (r.message || 'Sent'), r.success ? '#00c853' : '#e91916');
-    _lastQueueJson = ''; // force a refresh
+    _lastQueueJson = '';
     updateQueue();
 }
 
 function downloadGcode(jobId) {
     window.open('/api/jobs/' + jobId + '/gcode', '_blank');
 }
-
 
 // VISUALIZER
 async function drawVisualizer(){var d=await api('/api/work_area');drawCanvas(d);}
@@ -1140,8 +1138,6 @@ function drawCanvas(d) {
     ctx.strokeStyle='#252525';ctx.lineWidth=0.5;
     for(var gx=50;gx<mw;gx+=50){var gpx=PAD+gx*scale;ctx.beginPath();ctx.moveTo(gpx,PAD);ctx.lineTo(gpx,PAD+mh*scale);ctx.stroke();}
     for(var gy=50;gy<mh;gy+=50){var gpy=PAD+gy*scale;ctx.beginPath();ctx.moveTo(PAD,gpy);ctx.lineTo(PAD+mw*scale,gpy);ctx.stroke();}
-    
-    // Draw Active Area
     if(d.active&&d.active.width_mm){
         var ax=PAD+d.active.offset_x*scale,ay=PAD+d.active.offset_y*scale;
         var aw=d.active.width_mm*scale,ah=d.active.height_mm*scale;
@@ -1150,8 +1146,6 @@ function drawCanvas(d) {
         ctx.setLineDash([7,3]);ctx.strokeRect(ax,ay,aw,ah);ctx.setLineDash([]);
         ctx.fillStyle='#9147ff';ctx.font='10px sans-serif';
         ctx.fillText('Active '+d.active.width_mm+'x'+d.active.height_mm+'mm  offset ('+d.active.offset_x+','+d.active.offset_y+')',ax+4,ay+13);
-        
-        // Visualize Edge Margin if > 0
         var em = d.active.edge_margin_mm || 0;
         if(em > 0 && aw > em*2*scale && ah > em*2*scale) {
             ctx.strokeStyle='rgba(145,71,255,0.4)';
@@ -1159,7 +1153,6 @@ function drawCanvas(d) {
             ctx.strokeRect(ax + em*scale, ay + em*scale, aw - em*2*scale, ah - em*2*scale);
         }
     }
-    
     var ox=d.active?d.active.offset_x:0,oy=d.active?d.active.offset_y:0;
     (d.placements||[]).forEach(function(p){
         var px=PAD+(p.abs_x!==undefined?p.abs_x:p.x+ox)*scale;
@@ -1206,15 +1199,11 @@ window.addEventListener('DOMContentLoaded',async function(){
     await loadWorkArea();
     await loadOBSSettings();
     await loadTwitchSettings();
-    
-    // Automatically load the ustreamer camera stream on page load!
     reloadCamera();
-    
     await updateStatus();
     await updateQueue();
-    // Update live status much faster (1 second instead of 3) for live coordinates!
     setInterval(updateStatus, 1000);
-    setInterval(updateQueue, 2000); // Updated to poll history more frequently, safe since JSON check prevents rewrite
+    setInterval(updateQueue, 2000);
     setInterval(drawVisualizer,12000);
 });
 </script>
