@@ -16,14 +16,15 @@ class LaserController:
         self.connection_type = config.get('fluidnc_connection', 'network')
         self.lock = threading.Lock()
         self._line_buf = ''
+        self._line_buf_lock = threading.Lock()
         self._monitor_thread = None
         self._monitor_running = False
         self._engraving = False
         self._abort_flag = False
-        
+
         self.machine_state = "Unknown"
         self.mpos = {"x": 0.0, "y": 0.0, "z": 0.0}
-        
+
         # Start monitor thread immediately — it handles initial connect
         # and all future reconnects, so __init__ returns without blocking.
         self._start_monitor()
@@ -34,7 +35,7 @@ class LaserController:
         if self._engraving:
             debug_print("Cannot connect while actively engraving!")
             return False
-            
+
         try:
             if self.connection_type == 'network':
                 self._connect_network()
@@ -80,7 +81,7 @@ class LaserController:
         if self._engraving:
             debug_print("Blocked reconnect attempt during active engrave.")
             return False
-            
+
         debug_print("Attempting to reconnect to FluidNC...")
         self.disconnect()
         time.sleep(2)
@@ -94,7 +95,8 @@ class LaserController:
             except:
                 pass
         self.connected = False
-        self._line_buf = ''
+        with self._line_buf_lock:
+            self._line_buf = ''
         debug_print("Disconnected from FluidNC")
 
     # ── Status Parsing ────────────────────────────────────────
@@ -116,14 +118,12 @@ class LaserController:
 
     # ── Background connection monitor ─────────────────────────
     def _start_monitor(self):
-        """Start background thread that handles initial connect and auto-reconnects."""
         self._monitor_running = True
         self._monitor_thread = threading.Thread(
             target=self._monitor_loop, daemon=True, name='laser-monitor')
         self._monitor_thread.start()
 
     def _monitor_loop(self):
-        # Attempt initial connection before entering the steady-state poll loop
         if not self.connected:
             debug_print("LaserController: initial connect attempt in background...")
             try:
@@ -133,33 +133,30 @@ class LaserController:
 
         while self._monitor_running:
             time.sleep(0.5)
-            
+
             if self.connected:
-                got_lock = self.lock.acquire(blocking=False)
-                if got_lock:
-                    try:
-                        if self.connection_type == 'network':
-                            self.connection.sendall(b'?')
-                        else:
-                            self.connection.write(b'?')
-                        resp = self._read_line(max_wait_seconds=0.2)
-                        if resp and resp.startswith('<'):
-                            self._parse_status(resp)
-                    except Exception:
-                        debug_print("FluidNC ping failed — reconnecting...")
-                        self.connected = False
-                        self._line_buf = ''
-                    finally:
-                        self.lock.release()
-                else:
-                    # Lock held by send_gcode — send ? without lock (safe RT command)
-                    try:
-                        if self.connection_type == 'network':
-                            self.connection.sendall(b'?')
-                        else:
-                            self.connection.write(b'?')
-                    except Exception:
-                        self.connected = False
+                # Always send ? as a real-time command — never needs the lock
+                try:
+                    self._send_rt(b'?')
+                except Exception:
+                    self.connected = False
+                    continue
+
+                # Only try to read the status response if we're not mid-gcode
+                if not self._engraving:
+                    got_lock = self.lock.acquire(blocking=False)
+                    if got_lock:
+                        try:
+                            resp = self._read_line(max_wait_seconds=0.2)
+                            if resp and resp.startswith('<'):
+                                self._parse_status(resp)
+                        except Exception:
+                            debug_print("FluidNC ping read failed — reconnecting...")
+                            self.connected = False
+                            with self._line_buf_lock:
+                                self._line_buf = ''
+                        finally:
+                            self.lock.release()
 
             if not self.connected:
                 try:
@@ -174,8 +171,16 @@ class LaserController:
         self._monitor_running = False
 
     # ── I/O helpers ───────────────────────────────────────────
+    def _send_rt(self, byte_cmd):
+        """Send a real-time single-byte command directly — never acquires lock."""
+        if self.connection_type == 'network':
+            self.connection.sendall(byte_cmd)
+        else:
+            self.connection.write(byte_cmd)
+
     def _flush_input(self):
-        self._line_buf = ''
+        with self._line_buf_lock:
+            self._line_buf = ''
         try:
             if self.connection_type == 'network':
                 self.connection.settimeout(0.1)
@@ -195,22 +200,24 @@ class LaserController:
     def _read_line(self, max_wait_seconds=15.0):
         start = time.time()
         while time.time() - start < max_wait_seconds:
-            if getattr(self, '_abort_flag', False):
+            if self._abort_flag:
                 return "ALARM: aborted by software"
-                
-            if '\n' in self._line_buf:
-                line, self._line_buf = self._line_buf.split('\n', 1)
-                line = line.strip()
-                if line:
-                    return line
-                continue
-                
+
+            with self._line_buf_lock:
+                if '\n' in self._line_buf:
+                    line, self._line_buf = self._line_buf.split('\n', 1)
+                    line = line.strip()
+                    if line:
+                        return line
+                    continue
+
             try:
                 if self.connection_type == 'network':
                     try:
                         data = self.connection.recv(1024)
                         if data:
-                            self._line_buf += data.decode('utf-8', errors='ignore')
+                            with self._line_buf_lock:
+                                self._line_buf += data.decode('utf-8', errors='ignore')
                         else:
                             debug_print("_read_line: Connection remotely closed.")
                             return None
@@ -219,17 +226,30 @@ class LaserController:
                 else:
                     if self.connection.in_waiting > 0:
                         data = self.connection.read(self.connection.in_waiting)
-                        self._line_buf += data.decode('utf-8', errors='ignore')
+                        with self._line_buf_lock:
+                            self._line_buf += data.decode('utf-8', errors='ignore')
                     else:
                         time.sleep(0.01)
             except Exception as e:
                 debug_print(f"_read_line unexpected error: {e}")
                 return None
-                
+
         return None
 
     # ── Commands ──────────────────────────────────────────────
     def send_command(self, command):
+        """Send a single command and return (success, response).
+        Real-time commands (!, \x18, ~, ?) bypass the lock entirely.
+        """
+        RT_COMMANDS = {'!', '\x18', '~', '?'}
+        if command.strip() in RT_COMMANDS:
+            # RT commands are single-byte, no response expected, never block
+            try:
+                self._send_rt(command.strip().encode())
+                return True, "Sent RT command"
+            except Exception as e:
+                return False, str(e)
+
         with self.lock:
             if not self.connected:
                 debug_print("Not connected, attempting reconnect...")
@@ -242,15 +262,12 @@ class LaserController:
                     self.connection.sendall(cmd.encode())
                 else:
                     self.connection.write(cmd.encode())
-                    
-                if command in ('?', '~', '!', '\x18'):
-                    return True, "Sent RT command"
 
                 response = self._read_line(max_wait_seconds=2.0) or ''
                 while response.startswith('<'):
                     self._parse_status(response)
                     response = self._read_line(max_wait_seconds=2.0) or ''
-                    
+
                 debug_print(f"CMD: {command.strip()} -> {response[:80]}")
                 return True, response
             except Exception as e:
@@ -260,9 +277,12 @@ class LaserController:
 
     def send_gcode(self, gcode_lines, progress_callback=None):
         """
-        Send G-code one command at a time.
-        FluidNC delays 'ok' when the planner is full, providing natural
-        backpressure that keeps the planner populated without TCP flooding.
+        Send G-code one command at a time, releasing the lock between lines.
+
+        The lock is held only for the duration of (send + wait for ok) of each
+        individual line, then released before moving to the next one.  This
+        means stop(), send_command(), and manual LED commands can all acquire
+        the lock in the gaps between lines and get through immediately.
         """
         if isinstance(gcode_lines, str):
             gcode_lines = gcode_lines.split('\n')
@@ -281,95 +301,106 @@ class LaserController:
 
         debug_print(f"Sending {total} G-code commands...")
 
+        # One-time setup — check connection and flush before the loop
         with self.lock:
             self._abort_flag = False
             if not self.connected:
                 if not self.reconnect():
-                    if log_file: log_file.write("ABORT: Not connected\n"); log_file.close()
+                    if log_file:
+                        log_file.write("ABORT: Not connected\n")
+                        log_file.close()
                     return False, "Not connected to FluidNC"
-
             self._flush_input()
-            self._engraving = True
 
-            try:
-                for i, cmd in enumerate(commands):
-                    if getattr(self, '_abort_flag', False):
+        self._engraving = True
+        try:
+            for i, cmd in enumerate(commands):
+                if self._abort_flag:
+                    err_msg = "Job aborted by user/E-Stop"
+                    if log_file: log_file.write(f"ABORT: {err_msg}\n")
+                    return False, err_msg
+
+                # Acquire lock for just this one line: send + wait for ok
+                with self.lock:
+                    if self._abort_flag:
                         err_msg = "Job aborted by user/E-Stop"
-                        if log_file: log_file.write(f"ABORT: {err_msg}\n"); log_file.close()
+                        if log_file: log_file.write(f"ABORT: {err_msg}\n")
                         return False, err_msg
-                        
+
                     try:
                         if self.connection_type == 'network':
                             self.connection.sendall((cmd + '\n').encode())
                         else:
                             self.connection.write((cmd + '\n').encode())
-                            
+
                         if log_file:
                             log_file.write(f"[{i+1}/{total}] SENT: {cmd}\n")
                             log_file.flush()
-                            
+
                     except Exception as e:
                         err_msg = f"Send error at line {i + 1}: {e}"
-                        if log_file: log_file.write(f"ABORT: {err_msg}\n"); log_file.close()
+                        if log_file: log_file.write(f"ABORT: {err_msg}\n")
                         return False, err_msg
 
+                    # Wait for ok/error response for this line
                     while True:
+                        if self._abort_flag:
+                            err_msg = "Job aborted by user/E-Stop"
+                            if log_file: log_file.write(f"ABORT: {err_msg}\n")
+                            return False, err_msg
+
                         response = self._read_line(max_wait_seconds=3600.0)
-                        
+
                         if response is None:
                             err_msg = f"Timeout waiting for response at line {i + 1} ({cmd})"
                             debug_print(err_msg)
-                            if log_file: log_file.write(f"ABORT: {err_msg}\n"); log_file.close()
+                            if log_file: log_file.write(f"ABORT: {err_msg}\n")
                             return False, err_msg
-                            
+
                         lc = response.lower()
-                        
+
                         if lc.startswith('<'):
                             self._parse_status(response)
                             continue
-                        
+
                         if log_file:
                             log_file.write(f"  RECV: {response}\n")
                             log_file.flush()
-                        
+
                         if lc == 'ok':
                             break
-                            
+
                         if 'grbl' in lc or 'fluidnc' in lc:
                             err_msg = f"Controller reset detected at line {i + 1} ({cmd})"
                             debug_print(err_msg)
                             if log_file: log_file.write(f"RESET_DETECTED: {err_msg}\n")
                             return False, err_msg
-                            
+
                         if lc.startswith('error') or lc.startswith('alarm'):
                             err_msg = f"FluidNC {response} at line {i + 1} ({cmd})"
                             debug_print(err_msg)
                             if log_file: log_file.write(f"ERROR_DETECTED: {err_msg}\n")
                             return False, err_msg
-                            
+
                         if (lc.startswith('[echo:') or
-                            lc.startswith('[gc:') or
-                            lc.startswith('[msg:')):
+                                lc.startswith('[gc:') or
+                                lc.startswith('[msg:')):
                             continue
+                # Lock released here — other threads can send commands now
 
-                    if getattr(self, '_abort_flag', False):
-                        err_msg = "Job aborted by user/E-Stop"
-                        if log_file: log_file.write(f"ABORT: {err_msg}\n"); log_file.close()
-                        return False, err_msg
+                if progress_callback:
+                    progress_callback(i + 1, total)
 
-                    if progress_callback:
-                        progress_callback(i + 1, total)
+            debug_print(f"Successfully sent {total} commands")
+            if log_file:
+                log_file.write("--- STREAM COMPLETE ---\n")
+                log_file.close()
+            return True, f"Completed {total} commands"
 
-                debug_print(f"Successfully sent {total} commands")
-                if log_file:
-                    log_file.write(f"--- STREAM COMPLETE ---\n")
-                    log_file.close()
-                return True, f"Completed {total} commands"
-                
-            finally:
-                self._engraving = False
-                if log_file and not log_file.closed:
-                    log_file.close()
+        finally:
+            self._engraving = False
+            if log_file and not log_file.closed:
+                log_file.close()
 
     # ── Convenience commands ──────────────────────────────────
     def home(self):
@@ -377,13 +408,13 @@ class LaserController:
 
     def unlock(self):
         return self.send_command("$X")
-        
+
     def resume(self):
         return self.send_command("~")
 
     def reset(self):
         return self.send_command("\x18")
-        
+
     def clear_alarm(self):
         self.send_command("\x18")
         time.sleep(0.5)
@@ -392,17 +423,14 @@ class LaserController:
         return True, "Alarm Cleared"
 
     def stop(self):
+        """Emergency stop — sets abort flag and sends ! + \x18 directly,
+        bypassing the lock so it always gets through during an engrave."""
         debug_print("EMERGENCY STOP")
         self._abort_flag = True
         try:
-            if self.connection_type == 'network':
-                self.connection.sendall(b'!')
-                time.sleep(0.1)
-                self.connection.sendall(b'\x18')
-            else:
-                self.connection.write(b'!')
-                time.sleep(0.1)
-                self.connection.write(b'\x18')
+            self._send_rt(b'!')
+            time.sleep(0.05)
+            self._send_rt(b'\x18')
         except Exception as e:
-            debug_print(f"Stop command failed to send: {e}")
+            debug_print(f"Stop RT send failed: {e}")
         return True, "Stopped"
