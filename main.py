@@ -199,10 +199,14 @@ def process_queue(laser, layout, gcode_gen, obs):
 
 
 def _run_engrave(job, gcode, name, laser, obs):
-    """Run a single engrave job: fire LED on, engrave, LED off."""
-    # led_pwm is stored as 0-100 percent. M67 Q value is also 0-100 percent in FluidNC.
+    """Run a single engrave job: fire LED on, engrave, LED to end value."""
+    # led_pwm and led_pwm_end are stored as 0-100 percent.
+    # M67 Q value is also 0-100 percent in FluidNC.
     led_pwm = int(config.get('laser_settings.led_pwm', 0))
     led_pwm = max(0, min(100, led_pwm))
+
+    led_pwm_end = int(config.get('laser_settings.led_pwm_end', 0))
+    led_pwm_end = max(0, min(100, led_pwm_end))
 
     if led_pwm > 0:
         debug_print(f'LED on: M67 E0 Q{led_pwm}')
@@ -214,9 +218,8 @@ def _run_engrave(job, gcode, name, laser, obs):
     try:
         success, message = laser.send_gcode(gcode.split('\n'))
     finally:
-        if led_pwm > 0:
-            debug_print('LED off: M67 E0 Q0')
-            laser.send_command('M67 E0 Q0')
+        debug_print(f'LED end: M67 E0 Q{led_pwm_end}')
+        laser.send_command(f'M67 E0 Q{led_pwm_end}')
 
     if obs:
         obs.on_engrave_finish(name=name, success=success)
