@@ -105,7 +105,7 @@
         .job-settings-tooltip { position: relative; display: inline-block; cursor: help; border-bottom: 1px dotted #adadb8; margin-left: 8px; font-size: 0.75rem; }
         .job-settings-tooltip .tooltiptext { 
             visibility: hidden; 
-            width: 220px; 
+            width: 240px; 
             background-color: #1a1a1a; 
             color: #fff; 
             text-align: left; 
@@ -115,13 +115,12 @@
             z-index: 9999; 
             top: 125%; 
             left: 50%; 
-            margin-left: -110px; 
+            margin-left: -120px; 
             opacity: 0; 
             transition: opacity 0.2s; 
             border: 1px solid #9147ff; 
             font-size: 0.75rem; 
-            white-space: pre-wrap; 
-            line-height: 1.5; 
+            line-height: 1.7; 
             box-shadow: 0 8px 16px rgba(0,0,0,0.8); 
         }
         .job-settings-tooltip:hover .tooltiptext { visibility: visible; opacity: 1; }
@@ -135,6 +134,10 @@
             border-style: solid; 
             border-color: transparent transparent #9147ff transparent; 
         }
+        .job-settings-tooltip .tooltiptext table { width: 100%; border-collapse: collapse; }
+        .job-settings-tooltip .tooltiptext td { padding: 1px 4px; }
+        .job-settings-tooltip .tooltiptext td:first-child { color: #adadb8; white-space: nowrap; padding-right: 8px; }
+        .job-settings-tooltip .tooltiptext td:last-child { color: #efeff1; font-family: monospace; }
 
         .mpos-display {
             font-family: monospace;
@@ -1085,14 +1088,34 @@ async function updateQueue() {
                 if (j.gcode_file) {
                     actionBtns += `<button class="secondary" onclick="downloadGcode('${j.id}')" title="Download G-Code">&#11015;</button>`;
                 }
+
+                // Build the settings tooltip using an HTML table so rows break properly
                 var settingsHtml = '';
                 if (j.settings && Object.keys(j.settings).length > 0) {
-                    var sText = `Font: ${j.settings.font}\\nSize: ${j.settings.width}x${j.settings.height} mm\\nPosition: (${j.settings.x_machine}, ${j.settings.y_machine})\\nPower: ${j.settings.power}%\\nSpeed: ${j.settings.speed} mm/m`;
-                    if (j.settings.bold_repeats > 1) {
-                         sText += `\\nBold: ${j.settings.bold_repeats}x (${j.settings.bold_offset_mm}mm)`;
+                    var s = j.settings;
+                    // Compute end coordinates from start + size (matches Test Engrave X1/Y1/X2/Y2 inputs)
+                    var x1 = (s.x_machine !== undefined) ? s.x_machine : '?';
+                    var y1 = (s.y_machine !== undefined) ? s.y_machine : '?';
+                    var x2 = (s.x_machine !== undefined && s.width  !== undefined) ? (Math.round((s.x_machine + s.width)  * 100) / 100) : '?';
+                    var y2 = (s.y_machine !== undefined && s.height !== undefined) ? (Math.round((s.y_machine + s.height) * 100) / 100) : '?';
+                    var rows = [
+                        ['Font',  s.font  || '?'],
+                        ['X1',    x1],
+                        ['Y1',    y1],
+                        ['X2',    x2],
+                        ['Y2',    y2],
+                        ['Power', (s.power || '?') + '%'],
+                        ['Speed', (s.speed || '?') + ' mm/m'],
+                    ];
+                    if (s.bold_repeats > 1) {
+                        rows.push(['Bold', s.bold_repeats + 'x (' + s.bold_offset_mm + 'mm)']);
                     }
-                    settingsHtml = `<div class="job-settings-tooltip">&#9881;<span class="tooltiptext">${sText}</span></div>`;
+                    var tableRows = rows.map(function(r) {
+                        return '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td></tr>';
+                    }).join('');
+                    settingsHtml = '<div class="job-settings-tooltip">&#9881;<span class="tooltiptext"><table>' + tableRows + '</table></span></div>';
                 }
+
                 var errText = j.error ? `<div style="color:#e91916; font-size:0.75rem; margin-top:4px;">${j.error}</div>` : '';
                 return `
                 <div class="queue-item ${j.status}">
