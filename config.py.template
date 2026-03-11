@@ -60,6 +60,8 @@ class Config:
                 'passes':           1,
                 'spindle_max':      1000,
                 'z_depth_mm':       0.0,   # Z plunge depth during engraving (0 = disabled)
+                'led_pwm':          0,     # LED brightness when engraving starts (0 = off)
+                'led_pwm_end':      0,     # LED brightness after engraving finishes (0 = off)
             },
             'text_settings': {
                 'initial_height_mm': 5.0,
