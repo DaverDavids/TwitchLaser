@@ -500,11 +500,16 @@
                 <input type="number" id="s-z-height" min="0" max="100" step="0.1" value="0" placeholder="0">
                 <p class="hint">Raises Z to this position before engraving.</p>
             </div>
-            <div style="grid-column:1/-1">
-                <label>&#128161; LED Brightness (0&#8211;100%) <span style="color:#6b6b78; font-weight:normal;">&#8212; 0 = off</span></label>
+            <!-- LED Start and End side-by-side -->
+            <div>
+                <label>&#128161; LED Start (%)</label>
                 <input type="number" id="s-led-pwm" min="0" max="100" step="1" value="0" placeholder="0">
-                <p class="hint">LEDs turn on at this brightness when engraving starts and off when done. Sends M67 E0 Q0&#8211;100 to FluidNC.</p>
             </div>
+            <div>
+                <label>&#128161; LED End (%)</label>
+                <input type="number" id="s-led-pwm-end" min="0" max="100" step="1" value="0" placeholder="0">
+            </div>
+            <p class="hint" style="grid-column:1/-1;">LED brightens to Start when engraving begins, holds End level when finished. 0 = off. Sends M67 E0 Q0&#8211;100 to FluidNC.</p>
         </div>
         <div class="btn-row">
             <button onclick="saveLaserSettings()">&#128190; Save Settings</button>
@@ -685,12 +690,13 @@ async function updateStatus() {
         if (!window._settingsLoaded && s.config) {
             var ls  = s.config.laser_settings || {};
             var ts2 = s.config.text_settings  || {};
-            setVal('s-power',      ls.power_percent    || 50);
-            setVal('s-spindle-max',ls.spindle_max       || 1000);
-            setVal('s-speed',      ls.speed_mm_per_min  || 1000);
-            setVal('s-passes',     ls.passes            || 1);
-            setVal('s-z-height',   ls.z_height_mm !== undefined ? ls.z_height_mm : (ls.z_depth_mm !== undefined ? ls.z_depth_mm : 0));
-            setVal('s-led-pwm',    ls.led_pwm !== undefined ? ls.led_pwm : 0);
+            setVal('s-power',       ls.power_percent    || 50);
+            setVal('s-spindle-max', ls.spindle_max       || 1000);
+            setVal('s-speed',       ls.speed_mm_per_min  || 1000);
+            setVal('s-passes',      ls.passes            || 1);
+            setVal('s-z-height',    ls.z_height_mm !== undefined ? ls.z_height_mm : (ls.z_depth_mm !== undefined ? ls.z_depth_mm : 0));
+            setVal('s-led-pwm',     ls.led_pwm     !== undefined ? ls.led_pwm     : 0);
+            setVal('s-led-pwm-end', ls.led_pwm_end !== undefined ? ls.led_pwm_end : 0);
             setVal('s-height',     ts2.initial_height_mm || 5);
             setVal('s-min-height', ts2.min_height_mm     || 2);
             
@@ -1007,7 +1013,8 @@ async function saveLaserSettings() {
         speed_mm_per_min: +document.getElementById('s-speed').value,
         passes:           +document.getElementById('s-passes').value,
         z_height_mm:      +document.getElementById('s-z-height').value,
-        led_pwm:          Math.min(100, Math.max(0, +document.getElementById('s-led-pwm').value))
+        led_pwm:          Math.min(100, Math.max(0, +document.getElementById('s-led-pwm').value)),
+        led_pwm_end:      Math.min(100, Math.max(0, +document.getElementById('s-led-pwm-end').value))
     }};
     await api('/api/config','POST',body);
     flashOk('laser-ok'); log('Laser settings saved','#00c853');
