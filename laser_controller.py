@@ -434,3 +434,10 @@ class LaserController:
         except Exception as e:
             debug_print(f"Stop RT send failed: {e}")
         return True, "Stopped"
+
+    def clear_stop(self):
+        """Reset the abort flag so commands can flow again after a stop.
+        Call this before starting a new job or sending recovery commands
+        like $X / $H after an emergency stop."""
+        self._abort_flag = False
+        debug_print("Abort flag cleared")

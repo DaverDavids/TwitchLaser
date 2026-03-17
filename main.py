@@ -69,6 +69,10 @@ def process_queue(laser, layout, gcode_gen, obs):
                 time.sleep(1)
                 continue
 
+            # Clear any leftover abort flag from a previous stop so that
+            # recovery commands ($X, $H) and this new job can flow through.
+            laser.clear_stop()
+
             name = job['name']
             debug_print(f"Processing job {job['id']}: {name}")
 
@@ -78,26 +82,36 @@ def process_queue(laser, layout, gcode_gen, obs):
             if gcode_path and os.path.exists(gcode_path):
                 with open(gcode_path, 'r') as f:
                     gcode = f.read()
-                
-                actual_w = job['settings'].get('width', 0)
-                actual_h = job['settings'].get('height', 0)
-                x_local = job['settings'].get('x_local', 0)
-                y_local = job['settings'].get('y_local', 0)
+
+                x_local      = job['settings'].get('x_local', 0)
+                y_local      = job['settings'].get('y_local', 0)
+                actual_w     = job['settings'].get('width', 0)
+                actual_h     = job['settings'].get('height', 0)
                 final_height = job['settings'].get('text_height', 0)
-                
+
+                # Claim the layout slot if not already registered
+                # (idempotent — safe to call on both redo and first-run retry)
+                already_placed = any(
+                    abs(p['x'] - x_local) < 0.1 and abs(p['y'] - y_local) < 0.1
+                    for p in layout.placements
+                )
+                if not already_placed:
+                    layout.add_placement(name, x_local, y_local, actual_w, actual_h, final_height)
+                    debug_print(f"Layout slot claimed for re-engrave: '{name}' at ({x_local},{y_local})")
+
                 success, message = _run_engrave(job, gcode, name, laser, obs)
-                
+
             else:
                 text_height    = config.get('text_settings.initial_height_mm', 5.0)
                 laser_settings = config.get('laser_settings', {})
 
                 _, _, _, _, raw_width = gcode_gen._get_ttf_commands(name, text_height)
-                width = raw_width
-                height = text_height
+                width    = raw_width
+                height   = text_height
                 target_w = width
-                
+
                 override_rect = job['settings'].get('override_rect') if job.get('settings') else None
-                
+
                 if override_rect:
                     x1 = override_rect.get('x1')
                     y1 = override_rect.get('y1')
@@ -106,19 +120,19 @@ def process_queue(laser, layout, gcode_gen, obs):
 
                     x_local = x1 - layout.offset_x_mm
                     y_local = y1 - layout.offset_y_mm
-                    
+
                     if x2 is not None and y2 is not None:
-                        manual_w = abs(x2 - x1)
-                        manual_h = abs(y2 - y1)
+                        manual_w     = abs(x2 - x1)
+                        manual_h     = abs(y2 - y1)
                         scale_factor = min(manual_w / width, manual_h / height) if width > 0 and height > 0 else 1.0
                         final_height = text_height * scale_factor
-                        target_w = manual_w
+                        target_w     = manual_w
                         debug_print(f"Using manual bounding box override: {override_rect}")
                     else:
                         final_height = text_height
-                        target_w = width
+                        target_w     = width
                         debug_print(f"Using manual start point override (natural dimensions): X={x1}, Y={y1}")
-                        
+
                     position = (x_local, y_local, final_height)
 
                 else:
@@ -141,27 +155,32 @@ def process_queue(laser, layout, gcode_gen, obs):
                 gcode = gcode_gen.generate(
                     name, x_machine, y_machine, target_w, final_height
                 )
-                
+
                 actual_w = target_w
                 actual_h = final_height
-                
+
                 settings = {
-                    'x_local': round(x_local, 2),
-                    'y_local': round(y_local, 2),
-                    'x_machine': round(x_machine, 2),
-                    'y_machine': round(y_machine, 2),
-                    'width': round(actual_w, 2),
-                    'height': round(actual_h, 2),
-                    'text_height': round(final_height, 2),
-                    'font': gcode_gen.font_key,
-                    'passes': laser_settings.get('passes', 1),
-                    'power': gcode_gen.laser_power,
-                    'speed': gcode_gen.speed,
-                    'bold_repeats': config.get('text_settings.bold_repeats', 1),
+                    'x_local':        round(x_local, 2),
+                    'y_local':        round(y_local, 2),
+                    'x_machine':      round(x_machine, 2),
+                    'y_machine':      round(y_machine, 2),
+                    'width':          round(actual_w, 2),
+                    'height':         round(actual_h, 2),
+                    'text_height':    round(final_height, 2),
+                    'font':           gcode_gen.font_key,
+                    'passes':         laser_settings.get('passes', 1),
+                    'power':          gcode_gen.laser_power,
+                    'speed':          gcode_gen.speed,
+                    'bold_repeats':   config.get('text_settings.bold_repeats', 1),
                     'bold_offset_mm': config.get('text_settings.bold_offset_mm', 0.15)
                 }
                 job_mgr.update_job(job['id'], settings=settings)
                 job_mgr.save_gcode(job['id'], gcode)
+
+                # Claim layout space NOW — before engraving — so that any
+                # subsequent job queued while this one is running (or if this
+                # one fails/stops) cannot overlap this reserved rectangle.
+                layout.add_placement(name, x_local, y_local, actual_w, actual_h, final_height)
 
                 debug_print(
                     f"Engraving '{name}': "
@@ -172,16 +191,13 @@ def process_queue(laser, layout, gcode_gen, obs):
                 )
 
                 success, message = _run_engrave(job, gcode, name, laser, obs)
-                
-                if success:
-                    layout.add_placement(name, x_local, y_local, actual_w, actual_h, final_height)
 
             with queue_lock:
                 if success:
                     job_mgr.update_job(job['id'], status='finished')
                     debug_print(f'Completed: {name}')
                 else:
-                    if "stopped" in message.lower() or "alarm" in message.lower():
+                    if "stopped" in message.lower() or "alarm" in message.lower() or "aborted" in message.lower():
                         job_mgr.update_job(job['id'], status='stopped', error=message)
                     else:
                         job_mgr.update_job(job['id'], status='failed', error=message)
@@ -223,7 +239,7 @@ def _run_engrave(job, gcode, name, laser, obs):
 
     if obs:
         obs.on_engrave_finish(name=name, success=success)
-        
+
     return success, message
 
 
