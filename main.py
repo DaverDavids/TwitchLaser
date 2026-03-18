@@ -28,6 +28,7 @@ from gcode_generator import GCodeGenerator, FONT_PROFILES
 from twitch_monitor import TwitchMonitor
 from obs_controller import OBSController
 from job_manager import JobManager
+from alarm_indicator import AlarmIndicator
 
 try:
     from camera_stream import CameraStream
@@ -261,10 +262,15 @@ def main():
     print('      The web UI will be available immediately.')
 
     # ── Laser ─────────────────────────────────────────────
-    # LaserController.__init__ now returns immediately; the monitor
-    # thread handles the initial connect attempt in the background.
     print('Laser controller initializing (background)...')
     laser = LaserController()
+
+    # ── Alarm indicator LED ──────────────────────────────
+    # GPIO 17 (physical pin 11) — override via config 'alarm_led_gpio_pin'
+    # Gracefully skipped if gpiozero is not installed.
+    print('Starting alarm indicator LED (GPIO 17)...')
+    alarm_led = AlarmIndicator(laser_controller=laser)
+    alarm_led.start()
 
     # ── Layout ────────────────────────────────────────────
     ea = config.get('engraving_area', {})
@@ -283,13 +289,10 @@ def main():
     gcode_gen = _build_gcode_gen()
 
     # ── OBS controller ───────────────────────────────────
-    # OBSController.__init__ now returns immediately; connection happens
-    # in a background thread and retries every 15s until OBS is reachable.
     print('OBS controller initializing (background)...')
     obs = OBSController()
 
     # ── Twitch monitor ───────────────────────────────────
-    # TwitchMonitor.start() already spawns a daemon thread; always non-blocking.
     print('Starting Twitch monitor (background)...')
     twitch = TwitchMonitor(enqueue_callback=enqueue_name)
     if config.get('twitch', {}).get('enabled', True):
@@ -316,9 +319,10 @@ def main():
     # ── Handle Graceful Exit for Systemd ───────────────────
     def sigterm_handler(signum, frame):
         print('\nSIGTERM received, shutting down gracefully...')
-        if twitch: twitch.stop()
-        if laser:  laser.disconnect()
-        if camera: camera.stop()
+        if twitch:    twitch.stop()
+        if laser:     laser.disconnect()
+        if camera:    camera.stop()
+        if alarm_led: alarm_led.stop()
         print('Goodbye!')
         os._exit(0)
 
