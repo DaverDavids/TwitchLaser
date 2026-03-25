@@ -2,13 +2,17 @@
 Alarm Indicator + Recovery Button
 
 LED (GPIO 17, physical pin 11)
-  Blinks to signal non-idle machine states, driven directly by the Pi
-  so it works even when FluidNC rejects gcode (e.g. during Alarm).
+  Blinks to signal non-idle machine states and service health, driven
+  directly by the Pi so it works even when FluidNC rejects gcode.
 
-  Idle / engraving active  -> off
-  Alarm                    -> fast blink 150 ms on / 150 ms off
-  Hold / Door / other      -> slow blink 600 ms on / 600 ms off
-  Unknown / disconnected   -> slow blink 600 ms on / 600 ms off
+  Priority (highest first):
+    Alarm state          -> fast blink 150 ms on / 150 ms off
+    Hold / Door / other  -> slow blink 600 ms on / 600 ms off
+    Twitch disconnected  -> double-pulse every 2 s
+                           (100 ms on, 100 ms off, 100 ms on, 1.7 s off)
+    Camera down          -> long-short pulse every 3 s
+                           (500 ms on, 200 ms off, 100 ms on, 2.2 s off)
+    Idle / engraving     -> off
 
 Recovery Button (GPIO 27, physical pin 13)
   Press to attempt state-aware recovery back to Idle:
@@ -39,6 +43,9 @@ class AlarmIndicator:
     Manages the alarm LED blink loop and the recovery button.
     Both are optional: if gpiozero is unavailable the class starts
     silently without crashing the service.
+
+    Call set_twitch_status(bool) and set_camera_status(bool) from
+    the web server status poller to drive the service-health blink modes.
     """
 
     def __init__(self, laser_controller, led_pin=None, button_pin=None):
@@ -51,6 +58,10 @@ class AlarmIndicator:
         self._button = None
         self._running = False
         self._thread  = None
+
+        # Service-health flags (updated externally by web server)
+        self._twitch_connected = True   # optimistic until first poll
+        self._camera_ok        = True
 
         # Prevent overlapping recovery attempts
         self._recovering = False
@@ -65,7 +76,7 @@ class AlarmIndicator:
             self._led = LED(self._led_pin)
             debug_print(f"AlarmIndicator: LED on GPIO {self._led_pin}")
 
-            # pull_up=True: wire button between GPIO pin and GND (no external resistor needed)
+            # pull_up=True: wire button between GPIO pin and GND
             # hold_time gives us a clean 50 ms debounce before when_pressed fires
             self._button = Button(self._button_pin, pull_up=True, hold_time=0.05, bounce_time=0.05)
             self._button.when_pressed = self._on_button_press
@@ -101,29 +112,58 @@ class AlarmIndicator:
                 pass
         debug_print("AlarmIndicator: stopped")
 
+    def set_twitch_status(self, connected: bool):
+        """Call from the status poller with whether Twitch IRC is connected."""
+        self._twitch_connected = bool(connected)
+
+    def set_camera_status(self, ok: bool):
+        """Call from the status poller with whether ustreamer is reachable."""
+        self._camera_ok = bool(ok)
+
     # ── LED blink loop ───────────────────────────────────────
+    def _sleep(self, seconds):
+        """Interruptible sleep — checks _running every 50 ms."""
+        end = time.monotonic() + seconds
+        while self._running and time.monotonic() < end:
+            time.sleep(min(0.05, end - time.monotonic()))
+
     def _led_loop(self):
         while self._running:
             state     = self._laser.machine_state.lower()
             engraving = self._laser._engraving
 
-            if engraving or state in _IDLE_STATES:
-                self._led.off()
-                time.sleep(0.25)
-
-            elif state in _ALARM_STATES:
+            # ── Priority 1: Laser alarm ───────────────────────
+            if state in _ALARM_STATES:
                 # Fast blink — attention needed
-                self._led.on()
-                time.sleep(0.15)
-                self._led.off()
-                time.sleep(0.15)
+                self._led.on();  self._sleep(0.15)
+                self._led.off(); self._sleep(0.15)
 
-            else:
+            # ── Priority 2: Other non-idle machine state ──────
+            elif state not in _IDLE_STATES and not engraving:
                 # Hold, Door, Unknown, disconnected — slow blink
-                self._led.on()
-                time.sleep(0.6)
+                self._led.on();  self._sleep(0.6)
+                self._led.off(); self._sleep(0.6)
+
+            # ── Priority 3: Twitch not connected ──────────────
+            elif not self._twitch_connected:
+                # Double-pulse: pip-pip … pause
+                self._led.on();  self._sleep(0.10)
+                self._led.off(); self._sleep(0.10)
+                self._led.on();  self._sleep(0.10)
+                self._led.off(); self._sleep(1.70)
+
+            # ── Priority 4: Camera / ustreamer not reachable ──
+            elif not self._camera_ok:
+                # Long-short pulse: dash-dot … pause
+                self._led.on();  self._sleep(0.50)
+                self._led.off(); self._sleep(0.20)
+                self._led.on();  self._sleep(0.10)
+                self._led.off(); self._sleep(2.20)
+
+            # ── Priority 5: All good (idle or engraving) ──────
+            else:
                 self._led.off()
-                time.sleep(0.6)
+                self._sleep(0.25)
 
     # ── Recovery button ──────────────────────────────────────
     def _on_button_press(self):
@@ -149,7 +189,6 @@ class AlarmIndicator:
 
             if state in _ALARM_STATES:
                 debug_print("Recovery: Alarm — sending $X (unlock) then $H (home)")
-                # Clear the software abort flag so commands reach the machine
                 self._laser.clear_stop()
                 ok, resp = self._laser.send_command('$X')
                 debug_print(f"Recovery $X -> {resp}")
@@ -170,11 +209,10 @@ class AlarmIndicator:
                 self._laser.reconnect()
 
             else:
-                # Any other non-idle state: try a soft reset then home
                 debug_print(f"Recovery: Unknown state '{state}' — sending reset then home")
                 self._laser.clear_stop()
-                self._laser.reset()          # \x18 soft reset
-                time.sleep(1.0)              # let FluidNC reinitialise
+                self._laser.reset()
+                time.sleep(1.0)
                 self._laser.send_command('$X')
                 time.sleep(0.3)
                 self._laser.send_command('$H')
