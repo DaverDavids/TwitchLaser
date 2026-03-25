@@ -21,7 +21,7 @@ try:
 except ImportError:
     print("FATAL: config.py not found. Please rename config.py.template to config.py")
     sys.exit(1)
-    
+
 from laser_controller import LaserController
 from layout_manager import LayoutManager
 from gcode_generator import GCodeGenerator, FONT_PROFILES
@@ -90,8 +90,7 @@ def process_queue(laser, layout, gcode_gen, obs):
                 actual_h     = job['settings'].get('height', 0)
                 final_height = job['settings'].get('text_height', 0)
 
-                # Claim the layout slot if not already registered
-                # (idempotent — safe to call on both redo and first-run retry)
+                # Claim the layout slot if not already registered (idempotent)
                 already_placed = any(
                     abs(p['x'] - x_local) < 0.1 and abs(p['y'] - y_local) < 0.1
                     for p in layout.placements
@@ -178,9 +177,8 @@ def process_queue(laser, layout, gcode_gen, obs):
                 job_mgr.update_job(job['id'], settings=settings)
                 job_mgr.save_gcode(job['id'], gcode)
 
-                # Claim layout space NOW — before engraving — so that any
-                # subsequent job queued while this one is running (or if this
-                # one fails/stops) cannot overlap this reserved rectangle.
+                # Claim layout space before engraving so failed/stopped jobs
+                # still hold their slot and can't be overlapped.
                 layout.add_placement(name, x_local, y_local, actual_w, actual_h, final_height)
 
                 debug_print(
@@ -217,8 +215,6 @@ def process_queue(laser, layout, gcode_gen, obs):
 
 def _run_engrave(job, gcode, name, laser, obs):
     """Run a single engrave job: fire LED on, engrave, LED to end value."""
-    # led_pwm and led_pwm_end are stored as 0-100 percent.
-    # M67 Q value is also 0-100 percent in FluidNC.
     led_pwm = int(config.get('laser_settings.led_pwm', 0))
     led_pwm = max(0, min(100, led_pwm))
 
@@ -265,10 +261,11 @@ def main():
     print('Laser controller initializing (background)...')
     laser = LaserController()
 
-    # ── Alarm indicator LED ──────────────────────────────
-    # GPIO 17 (physical pin 11) — override via config 'alarm_led_gpio_pin'
+    # ── Alarm indicator LED + recovery button ─────────────────
+    # Pins default to GPIO 17 (LED) and GPIO 27 (button).
+    # Override via System Administration panel in the web UI.
     # Gracefully skipped if gpiozero is not installed.
-    print('Starting alarm indicator LED (GPIO 17)...')
+    print('Starting alarm indicator (GPIO 17 LED, GPIO 27 button)...')
     alarm_led = AlarmIndicator(laser_controller=laser)
     alarm_led.start()
 
@@ -327,11 +324,12 @@ def main():
         os._exit(0)
 
     signal.signal(signal.SIGTERM, sigterm_handler)
-    signal.signal(signal.SIGINT, sigterm_handler)
+    signal.signal(signal.SIGINT,  sigterm_handler)
 
     # ── Web server ─────────────────────────────────────────
     print('Starting web server...')
-    init_web_server(laser, layout, gcode_gen, twitch, camera, job_mgr, obs)
+    init_web_server(laser, layout, gcode_gen, twitch, camera, job_mgr, obs,
+                    alarm_indicator=alarm_led)
 
     hostname = config.get('hostname', 'twitchlaser')
     port     = 5000

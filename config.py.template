@@ -3,6 +3,8 @@ Configuration management with persistent storage to JSON
 """
 import json
 import os
+import shutil
+from datetime import datetime
 from pathlib import Path
 
 # Enable/disable debug output
@@ -29,7 +31,7 @@ engraving_area = {
     'active_height_mm': 100,
     'offset_x_mm': 50,
     'offset_y_mm': 100,
-    
+
     # Padding
     'edge_margin_mm': 1.5,
     'name_padding_mm': 1.5,
@@ -59,14 +61,14 @@ class Config:
                 'speed_mm_per_min': 1000,
                 'passes':           1,
                 'spindle_max':      1000,
-                'z_depth_mm':       0.0,   # Z plunge depth during engraving (0 = disabled)
-                'led_pwm':          0,     # LED brightness when engraving starts (0 = off)
-                'led_pwm_end':      0,     # LED brightness after engraving finishes (0 = off)
+                'z_depth_mm':       0.0,
+                'led_pwm':          0,
+                'led_pwm_end':      0,
             },
             'text_settings': {
                 'initial_height_mm': 5.0,
                 'min_height_mm':     2.0,
-                'font':              'random', # Changed default to random to represent the new option
+                'font':              'random',
                 'spacing_mm':        2.0,
                 'ttf_path':          '/usr/share/fonts/truetype/hack/Hack-Regular.ttf',
                 'bold_repeats':      1,
@@ -80,32 +82,52 @@ class Config:
                 'username': '',
                 'oauth_token': ''
             },
-            'camera_enabled':     True,
-            'fluidnc_connection': 'network',
-            'serial_port':        '/dev/ttyUSB0',
-            'serial_baud':        115200,
+            'camera_enabled':          True,
+            'fluidnc_connection':      'network',
+            'serial_port':             '/dev/ttyUSB0',
+            'serial_baud':             115200,
+            'alarm_led_gpio_pin':      17,
+            'recovery_button_gpio_pin': 27,
         }
 
         self.config = self.load()
 
     def load(self):
-        """Load config from JSON file or create with defaults"""
+        """Load config from JSON file, falling back to defaults on any error.
+
+        If the file exists but cannot be parsed (e.g. a hand-edit gone wrong),
+        it is renamed to a timestamped backup so it can be recovered, and the
+        service continues running on in-memory defaults.  The good config is
+        NEVER silently overwritten with defaults.
+        """
         Path(os.path.dirname(self.config_file)).mkdir(parents=True, exist_ok=True)
 
-        if os.path.exists(self.config_file):
+        if not os.path.exists(self.config_file):
+            debug_print("No config file found, starting with defaults (will save on first change)")
+            return self.defaults.copy()
+
+        raw = None
+        try:
+            with open(self.config_file, 'r') as f:
+                raw = f.read()
+            saved = json.loads(raw)
+            merged = self._deep_merge(self.defaults.copy(), saved)
+            debug_print(f"Loaded config from {self.config_file}")
+            return merged
+        except json.JSONDecodeError as e:
+            # Bad JSON — back up the corrupt file and run on defaults
+            ts     = datetime.now().strftime('%Y%m%d_%H%M%S')
+            backup = self.config_file.replace('.json', f'_corrupt_{ts}.json')
             try:
-                with open(self.config_file, 'r') as f:
-                    saved = json.load(f)
-                # Deep-merge: defaults fill in any missing keys from older saves
-                merged = self._deep_merge(self.defaults.copy(), saved)
-                debug_print(f"Loaded config from {self.config_file}")
-                return merged
-            except Exception as e:
-                debug_print(f"Error loading config: {e}, using defaults")
-                return self.defaults.copy()
-        else:
-            debug_print("No config file found, creating with defaults")
-            self.save(self.defaults)
+                shutil.copy2(self.config_file, backup)
+                debug_print(f"WARNING: config.json has invalid JSON ({e}). "
+                            f"Backed up to {backup}. Running on defaults.")
+            except Exception as be:
+                debug_print(f"WARNING: config.json invalid AND backup failed: {be}. "
+                            f"Running on defaults.")
+            return self.defaults.copy()
+        except Exception as e:
+            debug_print(f"Error loading config: {e}, using defaults")
             return self.defaults.copy()
 
     def save(self, config=None):
