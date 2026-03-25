@@ -520,6 +520,32 @@
     <!-- SYSTEM ADMIN -->
     <div class="card">
         <h3>System Administration</h3>
+
+        <!-- GPIO PIN SETTINGS -->
+        <div style="margin-bottom: 14px;">
+            <p style="font-size:0.78rem; color:#adadb8; margin-bottom:10px;">
+                &#128268; GPIO Alarm Indicator &amp; Recovery Button
+            </p>
+            <div class="form-grid">
+                <div>
+                    <label>Alarm LED Pin (BCM)</label>
+                    <input type="number" id="gpio-led-pin" min="2" max="27" step="1" value="17" placeholder="17">
+                </div>
+                <div>
+                    <label>Recovery Btn Pin (BCM)</label>
+                    <input type="number" id="gpio-btn-pin" min="2" max="27" step="1" value="27" placeholder="27">
+                </div>
+            </div>
+            <p class="hint">BCM pin numbers 2&#8211;27. Changes apply live &#8212; no restart needed.<br>
+                LED: wire between GPIO pin and GND (with resistor).<br>
+                Button: wire between GPIO pin and GND (22k&#8486; to GND, internal pull-up enabled).</p>
+            <div class="btn-row">
+                <button class="secondary" onclick="saveGpioSettings()">&#128190; Save GPIO</button>
+                <span class="save-ok" id="gpio-ok">&#10003; Applied live</span>
+            </div>
+            <div id="gpio-result" style="margin-top:6px; font-size:0.8rem; color:#adadb8;"></div>
+        </div>
+
         <div class="danger-zone" style="margin-top:0; border-color:#3a3a43;">
             <p style="color:#adadb8;">Warning: Resetting the board wipes all current placement history.</p>
             <div class="btn-row" style="margin-top:0;">
@@ -814,6 +840,42 @@ async function setLedOff() {
     document.getElementById('manual-led').value = 0;
     var r = await api('/api/laser_command', 'POST', {command: 'M67 E0 Q0'});
     log('LED off (M67 E0 Q0)', r.success ? '#adadb8' : '#e91916');
+}
+
+// GPIO SETTINGS
+async function loadGpioSettings() {
+    try {
+        var d = await api('/api/gpio_config');
+        setVal('gpio-led-pin', d.alarm_led_gpio_pin       !== undefined ? d.alarm_led_gpio_pin       : 17);
+        setVal('gpio-btn-pin', d.recovery_button_gpio_pin !== undefined ? d.recovery_button_gpio_pin : 27);
+    } catch(e) {}
+}
+async function saveGpioSettings() {
+    var ledPin = parseInt(document.getElementById('gpio-led-pin').value, 10);
+    var btnPin = parseInt(document.getElementById('gpio-btn-pin').value, 10);
+    var el = document.getElementById('gpio-result');
+    if (isNaN(ledPin) || ledPin < 2 || ledPin > 27 || isNaN(btnPin) || btnPin < 2 || btnPin > 27) {
+        el.textContent = 'Pin numbers must be integers between 2 and 27.';
+        el.style.color = '#e91916';
+        return;
+    }
+    if (ledPin === btnPin) {
+        el.textContent = 'LED and button pins must be different.';
+        el.style.color = '#e91916';
+        return;
+    }
+    var r = await api('/api/gpio_config', 'POST', {
+        alarm_led_gpio_pin:       ledPin,
+        recovery_button_gpio_pin: btnPin
+    });
+    el.textContent = r.message || (r.success ? 'OK' : 'Failed');
+    el.style.color = r.success ? '#00c853' : '#e91916';
+    if (r.success) {
+        flashOk('gpio-ok');
+        log('GPIO: LED=GPIO' + ledPin + ' Button=GPIO' + btnPin + ' — applied live', '#00c853');
+    } else {
+        log('GPIO save failed: ' + r.message, '#e91916');
+    }
 }
 
 // TWITCH CONTROLS
@@ -1233,6 +1295,7 @@ window.addEventListener('DOMContentLoaded',async function(){
     await loadWorkArea();
     await loadOBSSettings();
     await loadTwitchSettings();
+    await loadGpioSettings();
     reloadCamera();
     await updateStatus();
     await updateQueue();
