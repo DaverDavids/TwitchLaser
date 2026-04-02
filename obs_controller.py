@@ -51,6 +51,7 @@ except ImportError:
 class OBSController:
     def __init__(self):
         self._client  = None
+        # _lock protects _client and _enabled only — never held during network I/O
         self._lock    = threading.Lock()
         self._enabled = False
         self._stop_bg = False
@@ -103,7 +104,12 @@ class OBSController:
 
     # ── Connection ─────────────────────────────────────────
     def reconnect(self):
-        """Re-read config and reconnect (called from web UI or after failure)."""
+        """Re-read config and reconnect (called from web UI or after failure).
+
+        Tears down the existing connection synchronously, then spawns a fresh
+        background connect loop.  Returns immediately — callers should poll
+        is_connected() or wait for the background thread to finish.
+        """
         with self._lock:
             if self._client:
                 try:
@@ -113,20 +119,43 @@ class OBSController:
             self._client  = None
             self._enabled = False
 
-        # Spawn a fresh background connect loop
+        # Signal any running bg loop to stop, then spawn a fresh one
+        self._stop_bg = True
+        time.sleep(0.1)   # give the old loop one tick to notice
         self._stop_bg = False
         t = threading.Thread(target=self._connect_loop, daemon=True, name='obs-reconnect')
         t.start()
-        return True  # Returns immediately; connection happens in background
+        return True  # Returns immediately; actual connection happens in background
 
     def is_connected(self):
-        return self._enabled and self._client is not None
+        with self._lock:
+            return self._enabled and self._client is not None
+
+    # ── Internal: mark disconnected and kick off auto-reconnect ──
+    def _mark_disconnected_and_reconnect(self):
+        """Called from _run_action after a network failure.
+        Must NOT be called while self._lock is held (would deadlock).
+        """
+        with self._lock:
+            self._enabled = False
+        self._stop_bg = False
+        t = threading.Thread(target=self._connect_loop, daemon=True, name='obs-reconnect')
+        t.start()
 
     # ── Action dispatch ──────────────────────────────────
     def _run_action(self, action, name=''):
-        """Execute a single action dict. name = subscriber name for {name} substitution."""
-        if not self.is_connected():
-            return
+        """Execute a single action dict.  name = subscriber name for {name} substitution.
+
+        IMPORTANT: This method must NOT be called while self._lock is held.
+        It acquires the lock briefly to snapshot the client, then releases it
+        before doing any network I/O so that lock-holder threads are never
+        blocked waiting for OBS.
+        """
+        # Snapshot the client reference without holding the lock during I/O
+        with self._lock:
+            if not (self._enabled and self._client is not None):
+                return
+            client = self._client
 
         atype  = action.get('type', '').lower()
         scene  = action.get('scene',  '')
@@ -134,59 +163,60 @@ class OBSController:
 
         try:
             if atype == 'show_source':
-                self._set_source_visible(scene, source, True)
+                self._set_source_visible(client, scene, source, True)
 
             elif atype == 'hide_source':
-                self._set_source_visible(scene, source, False)
+                self._set_source_visible(client, scene, source, False)
 
             elif atype == 'switch_scene':
-                self._client.set_current_program_scene(scene)
+                client.set_current_program_scene(scene)
                 debug_print(f'OBS: switched to scene "{scene}"')
 
             elif atype == 'trigger_hotkey':
                 hotkey = action.get('hotkey', '')
-                self._client.trigger_hotkey_by_name(hotkey)
+                client.trigger_hotkey_by_name(hotkey)
                 debug_print(f'OBS: triggered hotkey "{hotkey}"')
 
             elif atype == 'set_text':
                 text = action.get('text', '').replace('{name}', name)
-                self._set_text_source(scene, source, text)
+                self._set_text_source(client, scene, source, text)
 
             else:
                 debug_print(f'OBS: unknown action type "{atype}"')
 
         except Exception as e:
             debug_print(f'OBS action "{atype}" failed: {e}')
-            # Mark disconnected; background reconnect loop will pick this up
-            with self._lock:
-                self._enabled = False
-            self._stop_bg = False
-            t = threading.Thread(target=self._connect_loop, daemon=True, name='obs-reconnect')
-            t.start()
+            # Mark disconnected OUTSIDE the lock, then start background reconnect.
+            # _mark_disconnected_and_reconnect acquires the lock itself — safe here
+            # because we are not holding self._lock at this point.
+            self._mark_disconnected_and_reconnect()
 
-    def _set_source_visible(self, scene_name, source_name, visible):
+    def _set_source_visible(self, client, scene_name, source_name, visible):
         """Show or hide a source in a scene."""
-        resp = self._client.get_scene_item_id(scene_name, source_name)
+        resp = client.get_scene_item_id(scene_name, source_name)
         item_id = resp.scene_item_id
-        self._client.set_scene_item_enabled(scene_name, item_id, visible)
+        client.set_scene_item_enabled(scene_name, item_id, visible)
         state = 'shown' if visible else 'hidden'
         debug_print(f'OBS: {state} source "{source_name}" in "{scene_name}"')
 
-    def _set_text_source(self, scene_name, source_name, text):
+    def _set_text_source(self, client, scene_name, source_name, text):
         """Update a Text GDI+/Freetype source."""
-        self._client.set_input_settings(source_name, {'text': text}, overlay=True)
+        client.set_input_settings(source_name, {'text': text}, overlay=True)
         debug_print(f'OBS: set "{source_name}" text to "{text}"')
 
     # ── Public event hooks ────────────────────────────────
     def on_engrave_start(self, name=''):
-        """Call this when an engraving job begins."""
+        """Call this when an engraving job begins.
+
+        Actions run WITHOUT holding self._lock so a WebSocket timeout never
+        blocks the laser queue thread.
+        """
         actions = config.get('obs.engrave_start_actions', [])
         if not actions:
             return
         debug_print(f'OBS: running {len(actions)} start action(s) for "{name}"')
-        with self._lock:
-            for action in actions:
-                self._run_action(action, name=name)
+        for action in actions:
+            self._run_action(action, name=name)
 
     def on_engrave_finish(self, name='', success=True):
         """Call this when an engraving job completes."""
@@ -194,17 +224,15 @@ class OBSController:
         if not actions:
             return
         debug_print(f'OBS: running {len(actions)} finish action(s) for "{name}"')
-        with self._lock:
-            for action in actions:
-                self._run_action(action, name=name)
+        for action in actions:
+            self._run_action(action, name=name)
 
     def test_action(self, action, name='test'):
         """Execute a single action immediately. Used by the web UI test button."""
         if not self.is_connected():
             return False, 'OBS not connected'
         try:
-            with self._lock:
-                self._run_action(action, name=name)
+            self._run_action(action, name=name)
             return True, 'Action executed'
         except Exception as e:
             return False, str(e)
