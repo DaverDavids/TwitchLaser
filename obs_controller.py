@@ -47,6 +47,9 @@ except ImportError:
     _OBS_AVAILABLE = False
     debug_print('obsws-python not installed; OBS integration disabled')
 
+# How often (seconds) the health-check ping fires while connected.
+_HEALTH_INTERVAL = 5
+
 
 class OBSController:
     def __init__(self):
@@ -99,8 +102,44 @@ class OBSController:
                 self._client  = client
                 self._enabled = True
             debug_print(f'OBS WebSocket connected: {host}:{port}')
+            # Start the health-check ping now that we are connected
+            t = threading.Thread(target=self._health_loop, daemon=True, name='obs-health')
+            t.start()
         except Exception as e:
             debug_print(f'OBS WebSocket connection failed: {e}')
+
+    # ── Health-check ping loop ──────────────────────────
+    def _health_loop(self):
+        """Ping OBS every _HEALTH_INTERVAL seconds to detect silent disconnects.
+
+        obsws_python has no disconnect callback; when OBS closes the TCP
+        connection the Python client object stays alive and _enabled stays True
+        until the next actual request fails.  This loop sends a cheap
+        GetVersion request periodically so we notice within a few seconds.
+        """
+        while True:
+            # Sleep first so we don't double-check right after connecting
+            for _ in range(_HEALTH_INTERVAL * 2):   # 0.5 s increments
+                if not self._enabled or self._stop_bg:
+                    return
+                time.sleep(0.5)
+
+            # Bail out if we've been told to stop or already disconnected
+            if not self._enabled or self._stop_bg:
+                return
+
+            # Snapshot the client under the lock
+            with self._lock:
+                if not (self._enabled and self._client is not None):
+                    return
+                client = self._client
+
+            try:
+                client.get_version()   # lightweight OBS request (~0 overhead)
+            except Exception as e:
+                debug_print(f'OBS health-check failed (OBS closed?): {e}')
+                self._mark_disconnected_and_reconnect()
+                return   # reconnect loop will spawn a new health thread on success
 
     # ── Connection ─────────────────────────────────────────
     def reconnect(self):
@@ -119,9 +158,9 @@ class OBSController:
             self._client  = None
             self._enabled = False
 
-        # Signal any running bg loop to stop, then spawn a fresh one
+        # Signal any running bg/health loops to stop, then spawn a fresh one
         self._stop_bg = True
-        time.sleep(0.1)   # give the old loop one tick to notice
+        time.sleep(0.1)   # give old loops one tick to notice
         self._stop_bg = False
         t = threading.Thread(target=self._connect_loop, daemon=True, name='obs-reconnect')
         t.start()
@@ -133,11 +172,10 @@ class OBSController:
 
     # ── Internal: mark disconnected and kick off auto-reconnect ──
     def _mark_disconnected_and_reconnect(self):
-        """Called from _run_action after a network failure.
-        Must NOT be called while self._lock is held (would deadlock).
-        """
+        """Called after a network failure, from outside any lock context."""
         with self._lock:
             self._enabled = False
+        debug_print('OBS: marked disconnected, starting reconnect loop')
         self._stop_bg = False
         t = threading.Thread(target=self._connect_loop, daemon=True, name='obs-reconnect')
         t.start()
@@ -187,8 +225,6 @@ class OBSController:
         except Exception as e:
             debug_print(f'OBS action "{atype}" failed: {e}')
             # Mark disconnected OUTSIDE the lock, then start background reconnect.
-            # _mark_disconnected_and_reconnect acquires the lock itself — safe here
-            # because we are not holding self._lock at this point.
             self._mark_disconnected_and_reconnect()
 
     def _set_source_visible(self, client, scene_name, source_name, visible):
